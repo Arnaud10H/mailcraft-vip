@@ -8,3 +8,7 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+
+# secrets (MailCraft-VIP)
+.env
+.env.*
