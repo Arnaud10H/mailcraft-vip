@@ -92,6 +92,9 @@ pub mod tasks_remote;
 #[cfg(test)]
 mod tasks_remote_tests;
 pub mod view;
+pub mod vip;
+#[cfg(test)]
+mod vip_tests;
 #[cfg(test)]
 mod wipe_tests;
 pub mod writing_tools;
@@ -145,6 +148,7 @@ pub fn registry() -> Registry {
     v.extend(tasks_remote::specs());
     v.extend(sync_progress::specs());
     v.extend(search_server::specs());
+    v.extend(vip::specs());
     Registry::new(v)
 }
 

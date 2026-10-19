@@ -661,7 +661,8 @@ pub fn sync_request(s: &Session, account: Id) -> Result<SyncRequest, CmdError> {
     let mut outbox = Vec::new();
     for m in s.mailbox.messages.values() {
         // Only what was queued with Send goes; a message moved here is held until Send Again (#607).
-        if Some(m.folder) == outbox_folder && m.held.is_empty() {
+        // A delayed message (VIP) waits in the Outbox until its time.
+        if Some(m.folder) == outbox_folder && m.held.is_empty() && m.send_at.is_none_or(|t| t <= s.now()) {
             outbox.push(m.as_ref().clone());
         }
         if m.uid != 0 {
@@ -1801,6 +1802,8 @@ fn take_in(mb: &mut Mailbox, account: Id, on_server: &mut OnServer, delta: Folde
             // them as any mail arriving in the Inbox does.
             let sorted = sorting && uid > old_seen && mb.sort_junk(id);
             if inbox != sorted {
+                // VIP Mail: VIP senders, automatic replies, follow-ups answered.
+                super::vip::arrived(mb, id);
                 mb.apply_rules(id);
             }
             // A list or a rule that moved it away has noted the move.

@@ -75,8 +75,10 @@ impl Row {
 }
 
 /// When a message counts as having arrived: its received time, or its date when it has none.
+/// A snoozed message counts as arriving when its snooze ends.
 pub fn when(m: &Message) -> Timestamp {
-    if m.received != 0 { m.received } else { m.date }
+    let arrived = if m.received != 0 { m.received } else { m.date };
+    m.snoozed_until.map_or(arrived, |t| t.max(arrived))
 }
 
 /// The first words of a message on one line, at most `max_chars` characters (and `…` when there
@@ -225,6 +227,7 @@ pub(crate) fn listing(s: &Session, decided: &HashMap<Id, bool>, searched: &HashM
     let me = me(s);
     let kept = s.kept();
     let mut kept_only = Vec::new();
+    let now = s.now();
     let mut shown: Vec<&Message> = mb
         .messages
         .values()
@@ -246,6 +249,8 @@ pub(crate) fn listing(s: &Session, decided: &HashMap<Id, bool>, searched: &HashM
             }
             hit
         })
+        // Snoozed mail stays out of the list until its time, unless it is searched for.
+        .filter(|m| m.snoozed_until.is_none_or(|t| t <= now) || query.wants_snoozed())
         .collect();
 
     let desc = s.view.sort_descending;

@@ -296,6 +296,15 @@ pub struct Message {
     /// always was). Not written: see [`Attachment::kept`].
     #[serde(skip)]
     pub kept: Option<Box<KeptBody>>,
+    /// Out of the list until then, when it comes back as unread and on top (`mail.snooze`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snoozed_until: Option<Timestamp>,
+    /// A message in the Outbox stays there until then (`compose.delay`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_at: Option<Timestamp>,
+    /// Sent with a follow-up: flagged until a reply comes in (`compose.followUp`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub awaiting_reply: bool,
 }
 
 /// The message a reply or forward not sent yet answers or forwards ([`Message::answers`]).

@@ -984,6 +984,9 @@ pub struct Mailbox {
     /// for once only, so that a message whose own bytes are broken isn't fetched at every start.
     #[serde(skip_serializing_if = "is_false")]
     pub redecoded: bool,
+    /// What VIP Mail brought: VIP senders, templates, automatic replies ([`crate::vip::Vip`]).
+    #[serde(skip_serializing_if = "crate::vip::Vip::is_empty")]
+    pub vip: crate::vip::Vip,
     next_id: Id,
 }
 
@@ -1014,6 +1017,7 @@ impl Default for Mailbox {
             outlook_categories: Vec::new(),
             zone: String::new(),
             redecoded: false,
+            vip: crate::vip::Vip::default(),
             next_id: 1,
         }
     }

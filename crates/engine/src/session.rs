@@ -664,6 +664,11 @@ pub struct Compose {
     /// is closed. Never read from a file: only [`Session::run`] sets it.
     #[serde(skip)]
     pub owner_changed: bool,
+    /// Kept in the Outbox until then (`compose.delay`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_at: Option<mailcraft_model::time::Timestamp>,
+    /// Flagged on sending, due in that many days, until a reply comes in (`compose.followUp`).
+    pub follow_up_days: u32,
 }
 
 fn is_zero_u32(n: &u32) -> bool {

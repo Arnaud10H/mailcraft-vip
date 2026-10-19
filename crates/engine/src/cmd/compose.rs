@@ -908,6 +908,7 @@ fn build_as(s: &Session, c: &Compose, strict: bool, message_id: Option<&str>) ->
         attachments: attachments_of(c, &message_id),
         read: true,
         importance: c.importance,
+        send_at: c.send_at,
         message_id,
         ..Default::default()
     })
@@ -1043,6 +1044,7 @@ fn send(s: &mut Session, _: &Value) -> CmdResult {
             (sd.pending, sd.saves) = (true, sd.saves.saturating_add(1));
         }
     }
+    super::vip::mark_follow_up(&mut m, c.follow_up_days, s.now());
     let as_draft = m.server_draft.is_some();
     let account = s.mailbox.account(m.account).cloned().ok_or_else(|| fail("the account is gone"))?;
     // Nothing here sends its mail, and it isn't a local account either: the message stays as it
@@ -1100,6 +1102,7 @@ fn send(s: &mut Session, _: &Value) -> CmdResult {
             let Some(inbox) = s.mailbox.folder_of_kind(local, FolderKind::Inbox) else { continue };
             let copy = Message { id: 0, folder: inbox, read: false, bcc: Vec::new(), answers: None, ..m.clone() };
             let cid = s.mailbox.add_message(copy)?;
+            super::vip::arrived(&mut s.mailbox, cid);
             s.mailbox.apply_rules(cid);
             delivered += 1;
         }

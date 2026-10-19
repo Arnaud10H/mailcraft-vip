@@ -4,7 +4,7 @@
 //!
 //! `budget from:ada has:attachment -draft after:2026-10-01`. Every term must match; `-` in front
 //! of a term excludes what it matches. Keywords: `from`, `to`, `cc`, `subject`, `body`,
-//! `category`, `attachment` (file name), `has:attachment`, `is:unread|read|flagged|important`,
+//! `category`, `attachment` (file name), `has:attachment`, `is:unread|read|flagged|important|snoozed`,
 //! `importance:high|normal|low`, `before:`, `after:`, `on:` (dates, `YYYY-MM-DD` or `M/D/YYYY`),
 //! and `received:` with a day, a range of days as Outlook writes one (`received:10/1/2026..10/22/2026`,
 //! both days in it, #329), or one side of one (`received:>=2026-10-01`, `<=`, and `>` and `<`, the
@@ -62,6 +62,7 @@ enum Kind {
     Unread,
     Read,
     Flagged,
+    Snoozed,
     Importance(Importance),
     Before(Date),
     After(Date),
@@ -325,6 +326,7 @@ fn keyword_kind(body: &str) -> Option<Kind> {
             "unread" => Kind::Unread,
             "read" => Kind::Read,
             "flagged" => Kind::Flagged,
+            "snoozed" => Kind::Snoozed,
             "important" => Kind::Importance(Importance::High),
             _ => return None,
         },
@@ -417,7 +419,7 @@ const OFFERED: &[&str] =
     &["from", "to", "cc", "subject", "body", "category", "attachment", "has", "is", "importance", "before", "after", "on", "received"];
 
 /// What `is:` and `has:` take.
-const IS_VALUES: &[&str] = &["unread", "read", "flagged", "important"];
+const IS_VALUES: &[&str] = &["unread", "read", "flagged", "important", "snoozed"];
 const HAS_VALUES: &[&str] = &["attachment"];
 
 /// A suggestion for the word being typed in the search box (#308): what the list shows, and what
@@ -954,6 +956,11 @@ impl Query {
         self
     }
 
+    /// Whether it looks for snoozed mail (`is:snoozed`), which the list otherwise leaves out.
+    pub fn wants_snoozed(&self) -> bool {
+        self.terms.iter().any(|t| t.kind == Kind::Snoozed && !t.negate)
+    }
+
     /// Whether `m` matches every term. Dates compare in a zone `offset_minutes` east of UTC.
     pub fn matches(&self, m: &Message, offset_minutes: i32) -> bool {
         self.matches_with(m, |_| offset_minutes, |_| None)
@@ -991,6 +998,7 @@ impl Query {
                 Kind::Unread => !m.read,
                 Kind::Read => m.read,
                 Kind::Flagged => m.flag == FlagStatus::Flagged,
+                Kind::Snoozed => m.snoozed_until.is_some(),
                 Kind::Importance(i) => m.importance == *i,
                 Kind::Before(d) => day() < *d,
                 Kind::After(d) => day() > *d,
