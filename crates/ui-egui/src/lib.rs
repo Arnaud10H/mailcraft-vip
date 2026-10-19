@@ -1019,6 +1019,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("ui.open", "Open Mailbox", "File › Open & Export", "{}"),
     ("ui.import", "Import", "File › Open & Export", "{}"),
     ("ui.attach", "Attach File", "Message › Include", "{}"),
+    (
+        "ui.unsubscribe",
+        "Unsubscribe",
+        "Home › Delete",
+        r#"{"id"?: number} — the list's own page opens in the browser, or a message to its address is started (`mail.unsubscribe`)"#,
+    ),
     ("ui.toggleFolder", "Expand or Collapse Folder", "Folder", r#"{"id": number}"#),
     (
         "ui.openWindow",
@@ -2222,6 +2228,18 @@ impl MailApp {
             "ui.import" => {
                 files::open(self, "import");
                 Ok(json!({"pending": "import"}))
+            }
+            "ui.unsubscribe" => {
+                let id = p.get("id").cloned().unwrap_or(Value::Null);
+                match self.session.run("mail.unsubscribe", &json!({"id": id})) {
+                    Ok(u) => {
+                        if let (Some(url), Some(ctx)) = (u.get("web").and_then(Value::as_str), self.ctx.as_ref()) {
+                            ctx.open_url(egui::OpenUrl::new_tab(url));
+                        }
+                        Ok(u)
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
             }
             "ui.attach" => {
                 if self.session.compose.is_none() {

@@ -139,6 +139,10 @@ pub(crate) enum Menu {
     Font,
     FontColor,
     Junk,
+    Snooze,
+    Templates,
+    FollowUpReply,
+    Delay,
 }
 
 /// How a control is drawn in the classic layout.
@@ -326,6 +330,7 @@ fn home_mail(app: &MailApp) -> Tab {
     // Junk ▾: Block Sender, Never Block…, Not Junk and Junk E-mail Options (#504).
     let junk = Item::small_menu("junk", "junk", "Junk", "Junk", Menu::Junk);
     let pinned = app.session.focused_message().is_some_and(|m| m.pinned);
+    let vip = app.session.focused_message().is_some_and(|m| app.session.mailbox.vip.is_vip(&m.from.email));
     Tab::of(vec![
         g(
             "New",
@@ -368,6 +373,11 @@ fn home_mail(app: &MailApp) -> Tab {
                 Item::big_menu("categorize", "categorize", "Categorize", "Categorize", Menu::CategorizeMail).at(3, 3).plain(),
                 Item::big_menu("followUp", "flag", "Follow\nUp", "Follow Up", Menu::FollowUp).at(3, 3).plain(),
                 Item::small("pin", "Pin", "Pin to the top of the list", "mail.pin", no()).checked(pinned).at(5, 5),
+                Item::small_menu("snooze", "clock", "Snooze", "Snooze until later", Menu::Snooze).at(5, 6),
+                Item::small(if vip { "starOn" } else { "star" }, "VIP", "Mark the sender VIP", if vip { "vip.remove" } else { "vip.add" }, no())
+                    .checked(vip)
+                    .at(5, 6),
+                Item::small("cancel", "Unsubscribe", "Leave this mailing list", "ui.unsubscribe", no()).at(5, 7),
             ],
         ),
         g(
@@ -615,6 +625,8 @@ pub(crate) const FONT_SIZES: [u8; 12] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 2
 
 fn message(app: &MailApp) -> Tab {
     let importance = app.session.compose.as_ref().map(|c| c.importance);
+    let follow_up = app.session.compose.as_ref().is_some_and(|c| c.follow_up_days > 0);
+    let delayed = app.session.compose.as_ref().is_some_and(|c| c.send_at.is_some());
     let look = look_now(app);
     Tab::of(vec![
         g("Send", vec![Item::big("send", "Send", "compose.send", no()).at(0, 1)]),
@@ -641,6 +653,7 @@ fn message(app: &MailApp) -> Tab {
                 Item::big("attach", "Attach\nFile", "ui.attach", no()).at(2, 2),
                 Item::big("insertLink", "Link", "compose.link", no()).checked(look.link && !look.plain).at(2, 3),
                 Item::big_menu("signature", "signature", "Signature", "Signature", Menu::Signature).at(2, 3),
+                Item::small_menu("templates", "notes", "Templates", "Insert a template", Menu::Templates).at(2, 4),
             ],
         ),
         g(
@@ -652,6 +665,10 @@ fn message(app: &MailApp) -> Tab {
                 Item::small("lowImportance", "Low Importance", "Low Importance", "compose.lowImportance", no())
                     .checked(importance == Some(Importance::Low))
                     .at(4, 4),
+                Item::small_menu("followUpReply", "reminder", "Follow Up", "Follow up if there is no reply", Menu::FollowUpReply)
+                    .checked(follow_up)
+                    .at(4, 5),
+                Item::small_menu("delay", "time", "Delay", "Delay delivery", Menu::Delay).checked(delayed).at(4, 5),
             ],
         ),
         g(
@@ -1270,6 +1287,48 @@ fn menu_contents(ui: &mut Ui, app: &mut MailApp, menu: Menu) {
         Menu::Font => font_menu(ui, app),
         Menu::FontColor => color_menu(ui, app),
         Menu::FontSize => size_menu(ui, app),
+        Menu::Snooze => {
+            let today = app.session.today();
+            let to_monday = (7 - i64::from(today.weekday().index())).rem_euclid(7).max(1);
+            mi(ui, app, "In 1 Hour", "mail.snooze", json!({"minutes": 60}));
+            mi(ui, app, "In 3 Hours", "mail.snooze", json!({"minutes": 180}));
+            mi(ui, app, "Tomorrow Morning", "mail.snooze", json!({"until": format!("{}T08:00", today.add_days(1).iso())}));
+            mi(ui, app, "Next Week", "mail.snooze", json!({"until": format!("{}T08:00", today.add_days(to_monday).iso())}));
+            ui.separator();
+            mi(ui, app, "Unsnooze", "mail.unsnooze", json!({}));
+            mi(ui, app, "Show Snoozed", "view.search", json!({"query": "is:snoozed", "scope": "everywhere"}));
+        }
+        Menu::Templates => {
+            let names: Vec<String> = app.session.mailbox.vip.templates.iter().map(|t| t.name.clone()).collect();
+            if names.is_empty() {
+                ui.label(tl!("No templates yet"));
+            }
+            for name in &names {
+                if plain_item(ui, name) {
+                    let _ = app.run("insert.quickParts", json!({"name": name}));
+                }
+            }
+            ui.separator();
+            let subject = app.session.compose.as_ref().map(|c| c.subject.trim().to_string()).unwrap_or_default();
+            let name = if subject.is_empty() { format!("{} {}", tl!("Template"), names.len() + 1) } else { subject };
+            mi(ui, app, "Save as Template", "template.save", json!({"name": name}));
+        }
+        Menu::FollowUpReply => {
+            let cur = app.session.compose.as_ref().map_or(0, |c| c.follow_up_days);
+            for (label, days) in [("In 1 Day", 1u32), ("In 3 Days", 3), ("In 1 Week", 7), ("In 2 Weeks", 14)] {
+                mi_check(ui, app, label, cur == days, "compose.followUp", json!({"days": days}));
+            }
+            ui.separator();
+            mi_check(ui, app, "No Follow Up", cur == 0, "compose.followUp", json!({"days": 0}));
+        }
+        Menu::Delay => {
+            let today = app.session.today();
+            mi(ui, app, "In 1 Hour", "compose.delay", json!({"minutes": 60}));
+            mi(ui, app, "Tomorrow at 8:00", "compose.delay", json!({"until": format!("{}T08:00", today.add_days(1).iso())}));
+            mi(ui, app, "Tomorrow at 14:00", "compose.delay", json!({"until": format!("{}T14:00", today.add_days(1).iso())}));
+            ui.separator();
+            mi(ui, app, "Send Right Away", "compose.delay", json!({}));
+        }
     }
 }
 
@@ -2502,7 +2561,7 @@ mod tests {
                 ("Delete", vec!["Delete", "Archive", "Junk", "Delete for Good"]),
                 ("Respond", vec!["Reply", "Reply\nAll", "Forward", "Forward as Attachment", "Meeting", "Add Sender"]),
                 ("Move", vec!["Move", "Rules"]),
-                ("Tags", vec!["Unread/\nRead", "Categorize", "Follow\nUp", "Pin"]),
+                ("Tags", vec!["Unread/\nRead", "Categorize", "Follow\nUp", "Pin", "Snooze", "VIP", "Unsubscribe"]),
                 ("Find", vec!["Filter\nEmail", "Related", "From Sender"]),
                 ("Send/Receive", vec!["Send/Receive\nAll Folders"]),
             ]

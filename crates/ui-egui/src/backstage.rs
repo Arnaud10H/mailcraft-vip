@@ -359,6 +359,11 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     if tile(ui, "categorize", tl!("Categories"), tl!("Names and colours for sorting mail, events, people and tasks"), t) {
         let _ = app.run("ui.dialog", json!({"name": "categories"}));
     }
+    let away = app.session.mailbox.vip.auto_reply.enabled;
+    let note = if away { tl!("On: senders get your out-of-office message") } else { tl!("Answer new mail while you're away") };
+    if tile(ui, "clock", tl!("Automatic Replies"), note, t) {
+        let _ = app.run("ui.dialog", json!({"name": "autoReply"}));
+    }
     // Everything MailCraft keeps here, gone (#177).
     crate::data_removal::section(app, ui, t);
 }
