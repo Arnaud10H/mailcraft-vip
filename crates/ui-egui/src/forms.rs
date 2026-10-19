@@ -31,6 +31,8 @@ pub enum Form {
     Junk(Box<junk::JunkForm>),
     /// Automatic Replies (out of office).
     AutoReply(Box<auto_reply::AutoReplyForm>),
+    /// Nextcloud calendar and contacts (CalDAV/CardDAV).
+    Nextcloud(Box<nextcloud::NextcloudForm>),
 }
 
 impl Form {
@@ -52,6 +54,7 @@ impl Form {
             "rules" => Form::Rules(Box::new(rules::RulesForm::new(s))),
             "junkOptions" => Form::Junk(Box::new(junk::JunkForm::new(s, params))),
             "autoReply" => Form::AutoReply(Box::new(auto_reply::AutoReplyForm::new(s))),
+            "nextcloud" => Form::Nextcloud(Box::new(nextcloud::NextcloudForm::new(s))),
             _ => return None,
         })
     }
@@ -67,6 +70,7 @@ impl Form {
             Form::Rules(_) => "rules",
             Form::Junk(_) => "junkOptions",
             Form::AutoReply(_) => "autoReply",
+            Form::Nextcloud(_) => "nextcloud",
         }
     }
 
@@ -81,6 +85,7 @@ impl Form {
             Form::Rules(_) => tl!("Rules").to_string(),
             Form::Junk(_) => tl!("Junk E-mail Options").to_string(),
             Form::AutoReply(_) => tl!("Automatic Replies").to_string(),
+            Form::Nextcloud(_) => tl!("Nextcloud Calendar and Contacts").to_string(),
         }
     }
 
@@ -93,7 +98,7 @@ impl Form {
             Form::Categories(_) => 420.0,
             Form::Rules(_) => 620.0,
             Form::Junk(_) => junk::WIDTH,
-            Form::AutoReply(_) => 560.0,
+            Form::AutoReply(_) | Form::Nextcloud(_) => 560.0,
         }
     }
 
@@ -107,6 +112,7 @@ impl Form {
             Form::Categories(f) => f.show(app, ui),
             Form::Rules(f) => f.show(app, ui),
             Form::AutoReply(f) => f.show(app, ui),
+            Form::Nextcloud(f) => f.show(app, ui),
             Form::Junk(f) => f.show(app, ui),
         }
     }
@@ -163,7 +169,7 @@ impl Form {
             Form::Event(f) => f.editing(),
             Form::Contact(f) => f.editing(),
             Form::Task(f) => f.editing(),
-            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) => None,
+            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) | Form::Nextcloud(_) => None,
         }
     }
 
@@ -175,7 +181,7 @@ impl Form {
             Form::Event(f) => f.dirty(),
             Form::Contact(f) => f.dirty(),
             Form::Task(f) => f.dirty(),
-            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) => false,
+            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) | Form::Nextcloud(_) => false,
         }
     }
 
@@ -193,7 +199,7 @@ impl Form {
             Form::Event(f) => (if f.is_meeting() { "meeting" } else { "appointment" }, f.subject().to_string()),
             Form::Contact(f) => ("contact", f.subject()),
             Form::Task(f) => ("task", f.subject().to_string()),
-            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) => return None,
+            Form::Account(_) | Form::Categories(_) | Form::Rules(_) | Form::Junk(_) | Form::AutoReply(_) | Form::Nextcloud(_) => return None,
         };
         self.changed().then(|| serde_json::json!({"form": form, "title": title}))
     }
@@ -5344,6 +5350,7 @@ mod account {
 
 /// The Categories dialog: recolour, rename, delete, add.
 mod auto_reply;
+mod nextcloud;
 
 mod categories {
     use egui::{Sense, Stroke, StrokeKind, Ui, vec2};

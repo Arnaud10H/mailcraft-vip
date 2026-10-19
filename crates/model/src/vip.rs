@@ -196,3 +196,49 @@ mod tests {
         assert!(!v.is_vip(""));
     }
 }
+
+/// A CalDAV/CardDAV server whose calendar and contacts an account reads ([`crate::Account::dav`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Dav {
+    /// `https://cloud.example.com`.
+    pub url: String,
+    pub username: String,
+    /// The collections, as paths on that server (Nextcloud's when empty: [`Dav::calendar_path`]).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub calendar: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub addressbook: String,
+}
+
+impl Dav {
+    pub fn calendar_path(&self) -> String {
+        if self.calendar.is_empty() { format!("/remote.php/dav/calendars/{}/personal/", self.username) } else { self.calendar.clone() }
+    }
+
+    pub fn addressbook_path(&self) -> String {
+        if self.addressbook.is_empty() { format!("/remote.php/dav/addressbooks/users/{}/contacts/", self.username) } else { self.addressbook.clone() }
+    }
+}
+
+/// One resource of a CalDAV/CardDAV collection: where it is, its version, its iCalendar or vCard text.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DavItem {
+    pub href: String,
+    pub etag: String,
+    pub data: String,
+}
+
+/// What a Send/Receive brought down from an account's [`Dav`] server. `None`: not asked, or it failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DavDownload {
+    /// The stretch of the calendar that was asked for (Unix seconds).
+    pub from: Timestamp,
+    pub to: Timestamp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<DavItem>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contacts: Option<Vec<DavItem>>,
+}

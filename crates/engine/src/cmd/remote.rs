@@ -2664,6 +2664,19 @@ fn calendar_for(mailbox: &mut Mailbox, account: Id, remote: &str) -> Result<(Id,
     Ok((id, true))
 }
 
+/// The calendar that follows the server's calendar `remote` of `account`, for reading only,
+/// called `name` when it is made.
+pub(crate) fn read_only_calendar(mailbox: &mut Mailbox, account: Id, remote: &str, name: &str) -> Result<Id, CmdError> {
+    let (id, new) = calendar_for(mailbox, account, remote)?;
+    if let Some(calendar) = mailbox.calendars.iter_mut().find(|calendar| calendar.id == id) {
+        calendar.rights = mailcraft_model::Rights::Read;
+        if new {
+            calendar.name = name.into();
+        }
+    }
+    Ok(id)
+}
+
 /// What the calendar that follows an account's main one is called, and what a calendar of the
 /// mailbox's own is called beside it.
 const SERVER_CALENDAR: &str = "Calendar";
@@ -2676,7 +2689,8 @@ pub const LOCAL_CALENDAR: &str = "On this computer";
 /// owner's, is left alone. And a server's calendar that was named after its account, as it once
 /// was, is called what the server calls it.
 fn settle_calendars(mailbox: &mut Mailbox) {
-    let server_kept = |mailbox: &Mailbox, calendar: &Calendar| keeper(mailbox, &calendar.origin).is_some();
+    // (One that may only be read takes nothing new: the mailbox's own stays beside it.)
+    let server_kept = |mailbox: &Mailbox, calendar: &Calendar| keeper(mailbox, &calendar.origin).is_some() && calendar.rights.can_edit();
     if !mailbox.calendars.iter().any(|calendar| server_kept(mailbox, calendar)) {
         return;
     }

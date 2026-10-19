@@ -1241,6 +1241,8 @@ pub struct MailApp {
     /// The file the window started with (the owner's own mailbox, or the one `--mailbox` named),
     /// which is never unconfirmed.
     pub(crate) own_mailbox: Option<String>,
+    /// The password of each account's Nextcloud (CalDAV/CardDAV) server, for this session.
+    dav_passwords: std::collections::HashMap<Id, String>,
     /// Why the system's credential store couldn't be used this session, once that has been found
     /// out; the owner has been told.
     pub(crate) secrets_trouble: Option<StoreTrouble>,
@@ -1538,6 +1540,7 @@ impl MailApp {
             settings_unread: None,
             held: Default::default(),
             own_mailbox,
+            dav_passwords: Default::default(),
             secrets_trouble: None,
             tokens: Default::default(),
             graph_tokens: Default::default(),
@@ -1860,7 +1863,7 @@ impl MailApp {
         let edited =
             if id == "account.edit" { params.get("id").and_then(Value::as_u64).and_then(|a| self.session.mailbox.account(a)).cloned() } else { None };
         // Undo and Redo may put an account's servers back as they were before an edit.
-        let keys = |a: &mailcraft_model::Account| ["password", "refresh"].map(|k| Self::secret_key(k, a));
+        let keys = |a: &mailcraft_model::Account| ["password", "refresh", "dav"].map(|k| Self::secret_key(k, a));
         let undone =
             matches!(id, "edit.undo" | "edit.redo").then(|| self.session.mailbox.accounts.iter().map(|a| (a.id, keys(a))).collect::<Vec<_>>());
         if let Some(r) = self.through_saver(id, &params) {
@@ -1920,7 +1923,7 @@ impl MailApp {
         // is asked again.
         if let (Ok(_), Some(before)) = (&r, edited)
             && let Some(after) = self.session.mailbox.account(before.id).cloned()
-            && ["password", "refresh"].into_iter().any(|k| Self::secret_key(k, &before) != Self::secret_key(k, &after))
+            && ["password", "refresh", "dav"].into_iter().any(|k| Self::secret_key(k, &before) != Self::secret_key(k, &after))
         {
             self.forget_account_secrets(&before);
             self.passwords.remove(&before.id);
@@ -2356,7 +2359,7 @@ impl MailApp {
     pub(crate) fn forget_every_secret(&mut self) -> Vec<String> {
         let mut keys: Vec<String> = std::mem::take(&mut self.ui.remembered_keys);
         for a in &self.session.mailbox.accounts {
-            for kind in ["password", "refresh"] {
+            for kind in ["password", "refresh", "dav"] {
                 keys.push(Self::secret_key(kind, a));
                 keys.push(Self::legacy_secret_key(kind, &a.email));
             }
@@ -2399,7 +2402,7 @@ impl MailApp {
     pub(crate) fn forget_account_secrets(&mut self, a: &mailcraft_model::Account) {
         let Some(store) = &self.services.secrets else { return };
         let mut gone = Vec::new();
-        for kind in ["password", "refresh"] {
+        for kind in ["password", "refresh", "dav"] {
             for key in [Self::secret_key(kind, a), Self::legacy_secret_key(kind, &a.email)] {
                 store.delete(&key);
                 if store.get(&key).is_none() {
@@ -2533,6 +2536,17 @@ impl MailApp {
     pub(crate) fn adopt_password(&mut self, account: Id, password: String) {
         self.jmap_refused.remove(&account);
         self.passwords.insert(account, password);
+    }
+
+    /// The Nextcloud password the owner just gave, for this session and, when wanted, the next.
+    pub(crate) fn adopt_dav_password(&mut self, account: Id, password: String) {
+        if password.is_empty() {
+            return;
+        }
+        if let Some(address) = self.session.mailbox.account(account).map(|a| a.email.clone()) {
+            self.remember("dav", &address, &password);
+        }
+        self.dav_passwords.insert(account, password);
     }
 
     /// Start a Send/Receive for an account (default: the first one with a server). Asks for the
@@ -2697,6 +2711,14 @@ impl MailApp {
                 return Ok(json!({"pending": "password"}));
             };
             request.password = password;
+        }
+        if request.account.dav.is_some() {
+            if !self.dav_passwords.contains_key(&account)
+                && let Some(pw) = self.remembered("dav", &address)
+            {
+                self.dav_passwords.insert(account, pw);
+            }
+            request.dav_password = self.dav_passwords.get(&account).cloned().unwrap_or_default();
         }
         let Some(start) = &self.services.sync else { return Err(tl!("This build can't connect to mail servers").to_string()) };
         self.sync_run = Some((account, None, false, quiet));

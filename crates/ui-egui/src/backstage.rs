@@ -364,6 +364,11 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     if tile(ui, "clock", tl!("Automatic Replies"), note, t) {
         let _ = app.run("ui.dialog", json!({"name": "autoReply"}));
     }
+    let linked = app.session.mailbox.default_account().and_then(|a| a.dav.as_ref()).map(|d| d.url.clone());
+    let note = linked.unwrap_or_else(|| tl!("Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)").to_string());
+    if tile(ui, "server", tl!("Nextcloud Calendar and Contacts"), &note, t) {
+        let _ = app.run("ui.dialog", json!({"name": "nextcloud"}));
+    }
     // Everything MailCraft keeps here, gone (#177).
     crate::data_removal::section(app, ui, t);
 }

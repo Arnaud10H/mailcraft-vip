@@ -77,7 +77,7 @@ impl MailApp {
             .accounts
             .iter()
             .flat_map(|a| {
-                ["password", "refresh"]
+                ["password", "refresh", "dav"]
                     .map(|kind| Ask { key: Self::secret_key(kind, a), old: migrate.then(|| Self::legacy_secret_key(kind, &a.email)) })
             })
             .collect();

@@ -1002,6 +1002,11 @@ pub fn apply_sync_part(s: &mut Session, run: &mut SyncTotals, mut result: SyncRe
     let (partial, stopped) = (result.partial, result.stopped);
     let pushed = result.pushed_count();
     let (counts, sent) = if result.has_news() { take_in_news(s, account, &mut result) } else { (Counts::default(), 0) };
+    if let Some(dav) = result.dav.take()
+        && let Err(e) = super::dav::take_in(s, account, &dav)
+    {
+        result.errors.push(format!("Nextcloud: {e}"));
+    }
     // Looking at a folder says which of how many it is.
     let folders = result.step.as_ref().filter(|step| step.stage == SyncStage::Checking).map(|step| (step.done, step.total));
     let piece = Piece {
