@@ -15,6 +15,7 @@ Chaque fonction est une commande. On la retrouve dans le ruban, dans la recherch
 | Modèles de message | `template.save`, `template.remove`, `template.list`, `insert.quickParts` | Message › Inclure › Templates |
 | Réponse automatique (absence), pour tout serveur IMAP | `account.automaticReplies` | Fichier › Infos › Automatic Replies |
 | Désabonnement d'une liste (RFC 2369 / 8058) | `mail.unsubscribe`, `ui.unsubscribe` | Accueil › Indicateurs › Unsubscribe |
+| Agenda et contacts Nextcloud (CalDAV/CardDAV), en lecture, à chaque Envoyer/Recevoir | `account.nextcloud` | Fichier › Infos › Nextcloud Calendar and Contacts |
 
 Ces fonctions se déclenchent sur le courrier qui arrive dans la boîte de réception (`crates/engine/src/cmd/vip.rs`, `arrived`) :
 - marquage VIP ;
@@ -30,9 +31,9 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 | Règles de tri | Les règles de MailCraft (`rules.*`) sont plus complètes. |
 | Libellés | Remplacés par les catégories de MailCraft. |
 | Recherche Meilisearch | Remplacée par la recherche locale de MailCraft : hors ligne, sur toutes les boîtes, avec opérateurs. L'index de VIP Mail ne contenait que 79 mails, jamais nettoyés. |
-| Tri par IA, résumé, réponses suggérées | Pas dans l'app. Claude Code passe par le serveur MCP : `mailcraft-cli mcp --connect 127.0.0.1:7991`. |
-| CalDAV / CardDAV (Nextcloud) | À faire. MailCraft ne synchronise l'agenda qu'avec Microsoft 365. |
-| Actions Dolibarr / Bench depuis un mail | À faire. En attendant, passer par le MCP et l'API Dolibarr. |
+| Tri par IA, résumé, réponses suggérées | Pas dans l'app. Claude Code passe par le serveur MCP `mailcraft` (`mailcraft-cli mcp --connect 127.0.0.1:7991`, déjà enregistré). |
+| CalDAV / CardDAV (Nextcloud) | Porté, **en lecture** : l'agenda « Nextcloud » est en lecture seule ici, et les contacts ne se modifient pas. Pour créer ou modifier, passer par Nextcloud. |
+| Actions Dolibarr / Bench depuis un mail (devis, tiers, tâche) | Compétence Claude Code `mailcraft-dolibarr` (`~/NextCloud/Claude/skills/`) : elle lit le mail par le MCP et appelle l'API. Le rattachement d'un mail à un projet n'a jamais servi et n'est pas repris. |
 | Multi-utilisateur, PWA, Electron, APK | Hors sujet pour une app de bureau. |
 
 ## Installation sur un poste vierge
@@ -47,7 +48,7 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
    ```sh
    git clone -b vip-merge <dépôt> ~/Code/mailcraft-vip
    ```
-3. Installer :
+3. Installer (le lanceur démarre l'app avec `--control 7991`, pour le MCP) :
    ```sh
    ~/Code/mailcraft-vip/packaging/vip-install.sh
    ```
@@ -87,6 +88,15 @@ python3 -I ~/NextCloud/Claude/migration/vipmail/import-vipmail.py
 - Il n'importe pas le mot de passe. Au premier Envoyer/Recevoir, MailCraft le demande une fois et le garde dans le trousseau du système. Le mot de passe se trouve dans `~/NextCloud/Claude/password/credentials.md`.
 - `--dry-run` affiche ce qui serait importé, sans rien écrire.
 
+## Nextcloud
+
+Dans Fichier › Infos › Nextcloud Calendar and Contacts, renseigner :
+- l'adresse : `https://cloud.happyinformatique.com` ;
+- l'identifiant : `arnaud` ;
+- un mot de passe d'application Nextcloud (Paramètres › Sécurité).
+
+Les chemins par défaut sont ceux de Nextcloud (agenda `personal`, carnet `contacts`). Le mot de passe va dans le trousseau. L'agenda va d'un mois en arrière à un an en avant ; les séries sont dépliées par le serveur.
+
 ## Compte CEVA (Microsoft 365)
 
 MailCraft se connecte à Microsoft 365 en OAuth. Le tenant CEVA bloque les nouveaux consentements : Microsoft affiche « Approbation requise ». MailCraft dit alors quoi faire et propose un court message à copier pour un administrateur.
@@ -103,7 +113,13 @@ Deux pistes restent possibles :
 
 ## Arrêt de VIP Mail sur Bernard
 
-À faire **seulement après validation** de la bascule :
+Fait le 19/10/2026 (`docker compose stop`, données conservées). Pour relancer au besoin :
+
+```sh
+ssh arnaud@bernard 'cd ~/Code/vipmail && docker compose start'
+```
+
+Commande d'arrêt :
 
 ```sh
 ssh arnaud@bernard 'cd ~/Code/vipmail && docker compose stop'
