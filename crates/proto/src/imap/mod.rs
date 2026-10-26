@@ -46,6 +46,8 @@ const MAX_FLAGS: usize = 64;
 const MAX_CAPABILITIES: usize = 256;
 /// Longest string sent in quotes; a longer one goes as a literal.
 const MAX_QUOTED: usize = 1_000;
+/// Longest Gmail label taken from the server or sent to it.
+const MAX_LABEL: usize = 1_000;
 /// Most messages named in one set by [`uid_sets`], and most a `COPYUID` answer may speak of.
 const MAX_SET_UIDS: usize = 500;
 /// Longest set [`uid_sets`] writes, in characters.
@@ -75,6 +77,8 @@ pub struct Imap<S> {
     text_seen: usize,
     /// Most responses the current command may bring.
     response_cap: usize,
+    /// Gmail's labels are asked for with flags and messages ([`Imap::ask_gmail_labels`]).
+    gmail_labels: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -110,6 +114,10 @@ pub struct Fetched {
     pub internal_date: Option<String>,
     /// The whole message (BODY[]), when asked for.
     pub body: Option<Vec<u8>>,
+    /// Gmail's labels of the message (`X-GM-LABELS`, decoded from modified UTF-7), when the
+    /// session asks for them ([`Imap::ask_gmail_labels`]) and the server said. System labels
+    /// keep their backslash (`\Inbox`, `\Important`).
+    pub labels: Option<Vec<String>>,
 }
 
 /// What became of the messages a UID COPY or UID MOVE named, when the server says (the `COPYUID`
@@ -242,6 +250,7 @@ struct Item {
     /// The header alone (`BODY[HEADER]`).
     header: Option<Vec<u8>>,
     size: Option<u64>,
+    labels: Option<Vec<String>>,
 }
 
 impl Item {
@@ -266,6 +275,17 @@ impl Item {
                 ("RFC822.SIZE", value) => item.size = value.atom().and_then(|n| n.parse().ok()),
                 ("BODY[]" | "RFC822", Value::Str(body)) => item.body = Some(body),
                 ("BODY[HEADER]" | "RFC822.HEADER", Value::Str(header)) => item.header = Some(header),
+                ("X-GM-LABELS", Value::List(labels)) => {
+                    item.labels = Some(
+                        labels
+                            .into_iter()
+                            .filter_map(Value::into_text)
+                            .filter(|label| !label.is_empty() && label.len() <= MAX_LABEL)
+                            .map(|label| utf7::decode_utf7(&label))
+                            .take(MAX_FLAGS)
+                            .collect(),
+                    )
+                }
                 _ => {}
             }
         }
@@ -553,7 +573,25 @@ impl<S: Read + Write> Imap<S> {
             leaving: false,
             text_seen: 0,
             response_cap: MAX_RESPONSES,
+            gmail_labels: false,
         }
+    }
+
+    /// Ask for Gmail's labels (`X-GM-LABELS`) with the flags and messages fetched from now on,
+    /// when the server offers Gmail's extensions (`X-GM-EXT-1`). Answers whether it does: asks
+    /// for the server's capabilities when it hasn't said them yet.
+    pub fn ask_gmail_labels(&mut self) -> Result<bool, ProtoError> {
+        let offered = match self.capabilities.is_some() {
+            true => self.offers("X-GM-EXT-1"),
+            false => self.capabilities()?.iter().any(|c| c == "X-GM-EXT-1"),
+        };
+        self.gmail_labels = offered;
+        Ok(offered)
+    }
+
+    /// The fetch items `base` (`UID FLAGS…`, without parentheses), with Gmail's labels when they are asked for.
+    fn items(&self, base: &str) -> String {
+        if self.gmail_labels { format!("({base} X-GM-LABELS)") } else { format!("({base})") }
     }
 
     /// Whether the session is signed in: after [`login`](Self::login) or
@@ -692,8 +730,9 @@ impl<S: Read + Write> Imap<S> {
     ///
     /// The messages come back in UID order, each once.
     pub fn uid_fetch_flags(&mut self, set: &str) -> Result<Vec<Fetched>, ProtoError> {
-        let mut found: BTreeMap<u32, Vec<String>> = BTreeMap::new();
-        let command = Self::fetch(set, "(UID FLAGS)")?;
+        let mut found: BTreeMap<u32, Fetched> = BTreeMap::new();
+        let items = self.items("UID FLAGS");
+        let command = Self::fetch(set, &items)?;
         let mut wanted = Wanted::new(set, &self.selected).ok_or_else(|| ProtoError::Protocol("not a set of messages".into()))?;
         self.response_cap = wanted.responses();
         let answered = self.run(command, &mut |values| {
@@ -702,17 +741,20 @@ impl<S: Read + Write> Imap<S> {
                 && wanted.wants(item.uid)
                 && (found.contains_key(&item.uid) || wanted.room(found.len()))
             {
-                let flags = found.entry(item.uid).or_default();
+                let message = found.entry(item.uid).or_insert_with(|| Fetched { uid: item.uid, ..Default::default() });
                 // When the server speaks of a message twice, its later word counts.
                 if let Some(later) = item.flags {
-                    *flags = later;
+                    message.flags = later;
+                }
+                if item.labels.is_some() {
+                    message.labels = item.labels;
                 }
             }
         });
         self.response_cap = MAX_RESPONSES;
         answered?;
         wanted.check()?;
-        Ok(found.into_iter().map(|(uid, flags)| Fetched { uid, flags, internal_date: None, body: None }).collect())
+        Ok(found.into_values().collect())
     }
 
     /// UID FETCH <set> (UID RFC822.SIZE): the size in bytes of every message in the set, in UID order.
@@ -739,14 +781,16 @@ impl<S: Read + Write> Imap<S> {
 
     /// UID FETCH <uid> (UID FLAGS INTERNALDATE BODY.PEEK[]); `None` when the UID is gone.
     pub fn uid_fetch_message(&mut self, uid: u32) -> Result<Option<Fetched>, ProtoError> {
-        self.fetch_one(uid, "(UID FLAGS INTERNALDATE BODY.PEEK[])", false)
+        let items = self.items("UID FLAGS INTERNALDATE BODY.PEEK[]");
+        self.fetch_one(uid, &items, false)
     }
 
     /// UID FETCH <uid> (UID FLAGS INTERNALDATE BODY.PEEK[HEADER]): the header alone of a message
     /// that is not taken whole (one that is too large), in [`Fetched::body`], up to and with the
     /// empty line that ends it. `None` when the UID is gone.
     pub fn uid_fetch_header(&mut self, uid: u32) -> Result<Option<Fetched>, ProtoError> {
-        self.fetch_one(uid, "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER])", true)
+        let items = self.items("UID FLAGS INTERNALDATE BODY.PEEK[HEADER]");
+        self.fetch_one(uid, &items, true)
     }
 
     /// One message with its flags and date, and either all of it or (`header_only`) its header.
@@ -765,6 +809,7 @@ impl<S: Read + Write> Imap<S> {
                     message.flags = flags;
                 }
                 message.internal_date = item.internal_date.or(message.internal_date.take());
+                message.labels = item.labels.or(message.labels.take());
                 // Only what was asked for: a whole message in answer to a question about its
                 // header is not taken in.
                 let asked_for = if header_only { item.header } else { item.body };
@@ -825,6 +870,39 @@ impl<S: Read + Write> Imap<S> {
             return Ok(());
         }
         let command = Command::new("UID STORE").arg(set).arg(if add { "+FLAGS.SILENT" } else { "-FLAGS.SILENT" }).arg(flags);
+        self.run(command, &mut ignore).map(|_| ())
+    }
+
+    /// UID STORE <uid> +X-GM-LABELS.SILENT / -X-GM-LABELS.SILENT (labels): add Gmail labels to a
+    /// message or take them off (Gmail's IMAP extensions, `X-GM-EXT-1`). A label that doesn't
+    /// exist yet is made by the server. Labels are written in modified UTF-7, quoted; a label
+    /// that is empty, too long or has a control character in it is refused.
+    pub fn uid_store_labels(&mut self, uid: u32, add: bool, labels: &[String]) -> Result<(), ProtoError> {
+        if uid == 0 {
+            return Err(ProtoError::Protocol("a message that isn't on the server has no labels there".into()));
+        }
+        if labels.is_empty() {
+            return Ok(());
+        }
+        if labels.len() > MAX_FLAGS {
+            return Err(ProtoError::Protocol("too many labels for one command".into()));
+        }
+        let mut list = Vec::with_capacity(labels.len());
+        for label in labels {
+            let label = label.trim();
+            if label.is_empty() || label.chars().any(char::is_control) || label.starts_with('\\') {
+                return Err(ProtoError::Protocol(format!("\"{}\" can't be used as a label", tidy(label))));
+            }
+            let encoded = utf7::encode_utf7(label);
+            if encoded.len() > MAX_LABEL || !encoded.bytes().all(|b| matches!(b, b' '..=b'~')) {
+                return Err(ProtoError::Protocol(format!("\"{}\" can't be used as a label", tidy(label))));
+            }
+            list.push(format!("\"{}\"", encoded.replace('\\', "\\\\").replace('"', "\\\"")));
+        }
+        let command = Command::new("UID STORE")
+            .arg(&uid.to_string())
+            .arg(if add { "+X-GM-LABELS.SILENT" } else { "-X-GM-LABELS.SILENT" })
+            .arg(&format!("({})", list.join(" ")));
         self.run(command, &mut ignore).map(|_| ())
     }
 

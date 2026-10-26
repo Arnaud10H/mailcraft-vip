@@ -199,9 +199,29 @@ pub(crate) struct FakeMessage {
     pub(crate) body: Vec<u8>,
     /// The size to report instead of the true one.
     pub(crate) claimed_size: Option<u64>,
+    /// Gmail's labels (`X-GM-LABELS`), as they are named: `\Important`, `Clients`.
+    pub(crate) labels: Vec<String>,
 }
 
 impl FakeMessage {
+    /// ` X-GM-LABELS ("a" "b")` when `asked`, else nothing.
+    fn labels_item(&self, asked: bool) -> String {
+        if !asked {
+            return String::new();
+        }
+        // As Gmail writes them: system labels as atoms, the owner's quoted (taken as they are:
+        // the fake knows no modified UTF-7, and is shared with tests outside this crate).
+        let quoted: Vec<String> = self
+            .labels
+            .iter()
+            .map(|l| match l.starts_with('\\') {
+                true => l.clone(),
+                false => format!("\"{}\"", l.replace('\\', "\\\\").replace('"', "\\\"")),
+            })
+            .collect();
+        format!(" X-GM-LABELS ({})", quoted.join(" "))
+    }
+
     pub(crate) fn has(&self, flag: &str) -> bool {
         self.flags.split_whitespace().any(|f| f.eq_ignore_ascii_case(flag))
     }
@@ -688,7 +708,7 @@ fn serve_imap(stream: TcpStream, shared: Arc<Mutex<ImapWorld>>) {
                     let mailbox = world.mailbox(&name);
                     let uid = mailbox.take_uid();
                     let code = if uidplus { format!("[APPENDUID {} {uid}] ", mailbox.uid_validity) } else { String::new() };
-                    mailbox.messages.push(FakeMessage { uid, flags, internal_date, body, claimed_size: None });
+                    mailbox.messages.push(FakeMessage { uid, flags, internal_date, body, claimed_size: None, labels: Vec::new() });
                     if world.hang_up_after.as_ref().is_some_and(|text| line.contains(text.as_str())) {
                         world.hang_up_after = None;
                         return;
@@ -735,6 +755,19 @@ fn serve_imap(stream: TcpStream, shared: Arc<Mutex<ImapWorld>>) {
                     None => reply.extend(format!("{tag} NO nothing is open\r\n").bytes()),
                     Some(_) if changes && read_only => {
                         reply.extend(format!("{tag} NO [READ-ONLY] the mailbox was opened to be looked at\r\n").bytes())
+                    }
+                    Some(at) if what == "STORE" && rest.to_ascii_uppercase().contains("X-GM-LABELS") => {
+                        // `+X-GM-LABELS.SILENT ("Clients" "Été")`
+                        let on = rest.starts_with('+');
+                        let list = rest.split_once('(').and_then(|(_, rest)| rest.rsplit_once(')')).map_or("", |(list, _)| list).to_string();
+                        let labels: Vec<String> = words(&list).into_iter().collect();
+                        for message in world.mailboxes[at].messages.iter_mut().filter(|m| in_set(set, m.uid)) {
+                            message.labels.retain(|l| !labels.contains(l));
+                            if on {
+                                message.labels.extend(labels.iter().cloned());
+                            }
+                        }
+                        reply.extend(format!("{tag} OK stored\r\n").bytes());
                     }
                     Some(at) if what == "STORE" => {
                         // `+FLAGS.SILENT (\Seen \Flagged)`
@@ -809,10 +842,12 @@ fn serve_imap(stream: TcpStream, shared: Arc<Mutex<ImapWorld>>) {
                 let mut parts = args.splitn(3, ' ');
                 let (fetch, set, items) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
                 let (whole, header) = (items.contains("BODY.PEEK[]"), items.contains("BODY.PEEK[HEADER]"));
+                let labelled = items.contains("X-GM-LABELS");
                 let mut refused = !fetch.eq_ignore_ascii_case("FETCH");
                 let messages = open.and_then(|i| world.mailboxes.get(i)).map_or(&[][..], |m| &m.messages[..]);
                 for (index, message) in messages.iter().enumerate().filter(|(_, m)| in_set(set, m.uid)) {
                     let (seq, uid, flags) = (index + 1, message.uid, &message.flags);
+                    let gm = message.labels_item(labelled);
                     if whole && world.hang_up_at_uid == Some(uid) {
                         return;
                     }
@@ -827,7 +862,8 @@ fn serve_imap(stream: TcpStream, shared: Arc<Mutex<ImapWorld>>) {
                     } else if whole {
                         let date = &message.internal_date;
                         reply.extend(
-                            format!("* {seq} FETCH (UID {uid} FLAGS ({flags}) INTERNALDATE \"{date}\" BODY[] {{{}}}\r\n", message.body.len()).bytes(),
+                            format!("* {seq} FETCH (UID {uid}{gm} FLAGS ({flags}) INTERNALDATE \"{date}\" BODY[] {{{}}}\r\n", message.body.len())
+                                .bytes(),
                         );
                         reply.extend(&message.body);
                         reply.extend(b")\r\n");
@@ -835,14 +871,16 @@ fn serve_imap(stream: TcpStream, shared: Arc<Mutex<ImapWorld>>) {
                         // Up to and with the empty line that ends it.
                         let end = message.body.windows(4).position(|w| w == b"\r\n\r\n").map_or(message.body.len(), |at| at + 4);
                         let date = &message.internal_date;
-                        reply.extend(format!("* {seq} FETCH (UID {uid} FLAGS ({flags}) INTERNALDATE \"{date}\" BODY[HEADER] {{{end}}}\r\n").bytes());
+                        reply.extend(
+                            format!("* {seq} FETCH (UID {uid}{gm} FLAGS ({flags}) INTERNALDATE \"{date}\" BODY[HEADER] {{{end}}}\r\n").bytes(),
+                        );
                         reply.extend(&message.body[..end]);
                         reply.extend(b")\r\n");
                     } else if items.contains("RFC822.SIZE") {
                         let size = message.claimed_size.unwrap_or(message.body.len() as u64);
                         reply.extend(format!("* {seq} FETCH (UID {uid} RFC822.SIZE {size})\r\n").bytes());
                     } else {
-                        reply.extend(format!("* {seq} FETCH (FLAGS ({flags}) UID {uid})\r\n").bytes());
+                        reply.extend(format!("* {seq} FETCH (FLAGS ({flags}) UID {uid}{gm})\r\n").bytes());
                     }
                 }
                 let end = if refused { "NO [SERVERBUG] that can't be done" } else { "OK done" };

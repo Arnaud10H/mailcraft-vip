@@ -111,6 +111,48 @@ Deux pistes restent possibles :
 1. demander à l'IT CEVA d'approuver l'application MailCraft, avec le message proposé par l'app ;
 2. continuer avec Outlook pour CEVA.
 
+## Compte Gmail (connexion Google)
+
+Avec un identifiant client Google, un compte Gmail se connecte sur la page de Google (OAuth 2.0,
+PKCE, jeton XOAUTH2 vers `imap.gmail.com` / `smtp.gmail.com`) : plus de mot de passe
+d'application. Sans identifiant, Gmail reste en mot de passe d'application comme avant.
+
+1. Google Cloud Console → un projet → API et services → **Écran de consentement OAuth** : type
+   « Externe », ajouter le scope `https://mail.google.com/`, puis **Publier l'application**
+   (statut « En production »). En statut « Test », Google invalide le jeton tous les 7 jours.
+   Pas besoin de validation Google pour un usage personnel : un avertissement « application non
+   validée » s'affiche à la première connexion (Paramètres avancés → Continuer).
+2. **Identifiants** → Créer → ID client OAuth → type **Application de bureau**.
+3. Mettre l'ID et le secret dans `.env` (ignoré par git) et les exporter à la compilation **ou**
+   au lancement :
+
+   ```zsh
+   export MAILCRAFT_GOOGLE_CLIENT_ID="xxxx.apps.googleusercontent.com"
+   export MAILCRAFT_GOOGLE_CLIENT_SECRET="GOCSPX-…"
+   ```
+
+   Google documente le secret d'une application de bureau comme non confidentiel ; il n'est
+   jamais écrit dans la boîte ni dans les journaux.
+4. Fichier › Ajouter un compte → adresse `@gmail.com` → la page Google s'ouvre dans le
+   navigateur. Le jeton de renouvellement va dans le trousseau du système.
+
+### Libellés Gmail = catégories
+
+Sur un compte Gmail (`imap.gmail.com`, extension `X-GM-EXT-1`), les libellés sont lus et écrits
+comme des **catégories** MailCraft, dans les deux sens :
+
+- à la réception, les libellés de l'utilisateur deviennent les catégories du message (les
+  libellés système `\Inbox`, `\Important`, `\Starred`… restent des dossiers/drapeaux) ; un
+  libellé inconnu est ajouté à la liste des catégories avec sa propre couleur ;
+- catégoriser / décatégoriser un message dans MailCraft pose / retire le libellé dans Gmail à la
+  synchro suivante (Gmail crée le libellé s'il n'existe pas) ;
+- fusion à trois voies comme pour les drapeaux : un changement fait ici et pas encore poussé
+  gagne, le reste suit le serveur.
+
+À savoir : les catégories posées localement (règles, catégorie VIP) partent aussi dans Gmail
+comme libellés. Les dossiers-libellés restent synchronisés comme avant (un message avec le
+libellé « Clients » apparaît aussi dans le dossier Clients).
+
 ## Arrêt de VIP Mail sur Bernard
 
 Fait le 19/10/2026 (`docker compose stop`, données conservées). Pour relancer au besoin :

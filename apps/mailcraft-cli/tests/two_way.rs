@@ -31,7 +31,14 @@ fn eml(subject: &str) -> Vec<u8> {
 }
 
 fn message(uid: u32, flags: &str, subject: &str) -> FakeMessage {
-    FakeMessage { uid, flags: flags.into(), internal_date: " 1-Jul-2003 09:52:37 +0000".into(), body: eml(subject), claimed_size: None }
+    FakeMessage {
+        uid,
+        flags: flags.into(),
+        internal_date: " 1-Jul-2003 09:52:37 +0000".into(),
+        body: eml(subject),
+        claimed_size: None,
+        labels: Vec::new(),
+    }
 }
 
 fn mailbox(raw: &str, flags: &str, uid_validity: u32, messages: Vec<FakeMessage>) -> FakeMailbox {

@@ -97,6 +97,12 @@ const MAX_LIFETIME: i64 = 7 * 24 * 3_600;
 const MAX_IDENTITY: usize = 254;
 
 const MICROSOFT_LOGIN: &str = "https://login.microsoftonline.com";
+/// Google's sign-in page and token endpoint ("OAuth 2.0 for Mobile & Desktop Apps").
+const GOOGLE_AUTHORIZE: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
+/// Gmail in full (IMAP, SMTP and the Gmail API all take a token for it) and who signed in. A
+/// refresh token comes from `access_type=offline` on the page, not from a scope.
+const GOOGLE_SCOPE: &str = "https://mail.google.com/ openid email profile";
 /// IMAP and SMTP, a refresh token to go with the access token, and who it is that signed in.
 const MICROSOFT_SCOPE: &str =
     "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access openid profile email";
@@ -210,6 +216,20 @@ pub enum Resource {
     GraphMail,
 }
 
+/// How a provider wants to be spoken to, where the two differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dialect {
+    /// Microsoft's identity platform: `response_mode=query` on the page, the scope again with
+    /// every token request, and no client secret (a public client).
+    #[default]
+    Microsoft,
+    /// Google's: no `response_mode`, `access_type=offline` and a consent prompt on the page (or
+    /// no refresh token comes back), no scope with a token request, and the client secret of a
+    /// desktop application with every one. Google documents that secret as one an installed
+    /// program can't keep, and PKCE is what protects the code.
+    Google,
+}
+
 /// Where a provider signs people in, and what it is asked for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Endpoints {
@@ -229,6 +249,8 @@ pub struct Endpoints {
     /// less than `consent`, and known to be had. Empty for nothing in between: the sign-in is
     /// then tried without any of it, as above.
     pub lesser: String,
+    /// How the provider wants to be spoken to.
+    pub dialect: Dialect,
 }
 
 impl Endpoints {
@@ -269,8 +291,18 @@ impl Endpoints {
                     scope,
                     consent,
                     lesser,
+                    dialect: Dialect::Microsoft,
                 }
             }
+            // One scope covers IMAP, SMTP and the Gmail API: whatever the resource, the same.
+            OAuthProvider::Google => Endpoints {
+                authorize: GOOGLE_AUTHORIZE.to_string(),
+                token: GOOGLE_TOKEN.to_string(),
+                scope: GOOGLE_SCOPE.to_string(),
+                consent: String::new(),
+                lesser: String::new(),
+                dialect: Dialect::Google,
+            },
         }
     }
 }
@@ -856,14 +888,15 @@ fn attempt(
     open(&authorize_url(endpoints, consent, client_id, &redirect_uri, &state, &challenge(&verifier), login_hint));
     let code = redirect.wait(&state, cancel, patience)?;
     drop(redirect);
-    let fields = [
+    let secret = client_secret(endpoints.dialect);
+    let mut fields = vec![
         ("grant_type", "authorization_code"),
         ("client_id", client_id),
         ("code", code.as_str()),
         ("redirect_uri", redirect_uri.as_str()),
         ("code_verifier", verifier.as_str()),
-        ("scope", endpoints.scope.as_str()),
     ];
+    with_dialect(&mut fields, endpoints, &secret);
     trade(&token_endpoint, &fields, "", &[code.as_str(), verifier.as_str()])
 }
 
@@ -908,7 +941,9 @@ pub fn refresh_for_at(endpoints: &Endpoints, oauth: &OAuth, refresh_token: &str,
     if refresh_token.is_empty() || !usable(refresh_token) {
         return Err(NetError::Proto(ProtoError::Auth("there is no earlier sign-in to renew".into())));
     }
-    let fields = [("grant_type", "refresh_token"), ("client_id", client_id), ("refresh_token", refresh_token), ("scope", endpoints.scope.as_str())];
+    let secret = client_secret(endpoints.dialect);
+    let mut fields = vec![("grant_type", "refresh_token"), ("client_id", client_id), ("refresh_token", refresh_token)];
+    with_dialect(&mut fields, endpoints, &secret);
     trade(&token_endpoint, &fields, refresh_token, &[refresh_token]).map_err(|refused| match (resource, refused.about, refused.error) {
         // The sign-in is good and Graph is what it doesn't cover: because nobody agreed to it,
         // or because the provider won't hand it to this application. Asking the owner on the
@@ -1154,6 +1189,34 @@ fn tenant(oauth: &OAuth) -> Result<&str, NetError> {
     }
 }
 
+/// The client secret of Google's desktop applications: the `MAILCRAFT_GOOGLE_CLIENT_SECRET`
+/// environment variable when the program runs, else the one the build was given under the same
+/// name; empty for none, and always for Microsoft. Never logged.
+fn client_secret(dialect: Dialect) -> String {
+    match dialect {
+        Dialect::Microsoft => String::new(),
+        Dialect::Google => {
+            let built_in = option_env!("MAILCRAFT_GOOGLE_CLIENT_SECRET").unwrap_or_default();
+            let secret = std::env::var("MAILCRAFT_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| built_in.to_string());
+            let secret = secret.trim();
+            if secret.len() <= 200 && secret.bytes().all(|b| b.is_ascii_graphic()) { secret.to_string() } else { String::new() }
+        }
+    }
+}
+
+/// What a token request takes on top of the grant, the way the provider wants it: Microsoft the
+/// scope again, Google its client secret (when there is one) and no scope.
+fn with_dialect<'a>(fields: &mut Vec<(&'a str, &'a str)>, endpoints: &'a Endpoints, secret: &'a str) {
+    match endpoints.dialect {
+        Dialect::Microsoft => fields.push(("scope", endpoints.scope.as_str())),
+        Dialect::Google => {
+            if !secret.is_empty() {
+                fields.push(("client_secret", secret));
+            }
+        }
+    }
+}
+
 /// `bytes` random bytes as text that is safe in a URL.
 fn random(bytes: usize) -> Result<String, NetError> {
     let mut buf = vec![0u8; bytes.min(64)];
@@ -1181,22 +1244,22 @@ fn authorize_url(
     login_hint: &str,
 ) -> String {
     let scope = if consent.trim().is_empty() { endpoints.scope.clone() } else { format!("{} {}", endpoints.scope.trim(), consent.trim()) };
-    let mut fields = vec![
-        ("client_id", client_id),
-        ("response_type", "code"),
-        ("redirect_uri", redirect_uri),
-        ("response_mode", "query"),
-        ("scope", scope.as_str()),
-        ("state", state),
-        ("code_challenge", challenge),
-        ("code_challenge_method", "S256"),
-    ];
+    let mut fields = vec![("client_id", client_id), ("response_type", "code"), ("redirect_uri", redirect_uri)];
+    if endpoints.dialect == Dialect::Microsoft {
+        fields.push(("response_mode", "query"));
+    }
+    fields.extend([("scope", scope.as_str()), ("state", state), ("code_challenge", challenge), ("code_challenge_method", "S256")]);
     let hint = login_hint.trim();
     if !hint.is_empty() && hint.len() <= 320 && !hint.chars().any(char::is_control) {
         fields.push(("login_hint", hint));
     }
-    // The owner picks the account on the page, rather than being signed in as whoever the browser remembers.
-    fields.push(("prompt", "select_account"));
+    match endpoints.dialect {
+        // The owner picks the account on the page, rather than being signed in as whoever the browser remembers.
+        Dialect::Microsoft => fields.push(("prompt", "select_account")),
+        // Google hands out a refresh token only for offline access, and only when the owner has
+        // just agreed on the page: asking for the consent screen every time makes sure of one.
+        Dialect::Google => fields.extend([("access_type", "offline"), ("prompt", "consent select_account")]),
+    }
     let address = endpoints.authorize.trim();
     format!("{address}{}{}", if address.contains('?') { '&' } else { '?' }, http::form(&fields))
 }

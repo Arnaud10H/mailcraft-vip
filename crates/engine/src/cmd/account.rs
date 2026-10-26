@@ -9,8 +9,8 @@
 use std::collections::{HashMap, HashSet};
 
 use mailcraft_model::sync::{
-    Deleted, FlagsPushed, FolderDelta, FolderState, ImapPlace, MAX_PLACES, Moved, PLACE_BYTES, Placed, RemoteFlags, RemoteOp, SyncRequest,
-    SyncResult, SyncStage, summary_line_in,
+    Deleted, FlagsPushed, FolderDelta, FolderState, ImapPlace, LabelsPushed, MAX_PLACES, Moved, PLACE_BYTES, Placed, RemoteFlags, RemoteOp,
+    SyncRequest, SyncResult, SyncStage, own_labels, summary_line_in,
 };
 use mailcraft_model::{
     Account, AccountKind, Directory, EwsServer, FlagStatus, Folder, FolderKind, Id, JmapServer, MailIdentity, Mailbox, Message, OAuth, OAuthProvider,
@@ -96,7 +96,7 @@ fn sign_in(a: &mut Account, v: &Value) -> Result<(), CmdError> {
         Some(_) => return Err(bad("`auth` is password or oauth2")),
     }
     let provider = match p::str(v, "provider") {
-        Some(name) => Some(OAuthProvider::parse(name).ok_or_else(|| bad("`provider` is microsoft"))?),
+        Some(name) => Some(OAuthProvider::parse(name).ok_or_else(|| bad("`provider` is microsoft or google"))?),
         None => None,
     };
     let (client_id, tenant) = (word("clientId", 200)?, word("tenant", 64)?);
@@ -137,7 +137,7 @@ fn preset(_: &mut Session, v: &Value) -> CmdResult {
         _ => return Err(bad(format!("\"{email}\" isn't an e-mail address"))),
     };
     let asked = match p::str(v, "provider") {
-        Some(name) => Some(OAuthProvider::parse(name).ok_or_else(|| bad("`provider` is microsoft"))?),
+        Some(name) => Some(OAuthProvider::parse(name).ok_or_else(|| bad("`provider` is microsoft or google"))?),
         None => None,
     };
     // The owner says whose the account is: that settles it.
@@ -156,6 +156,9 @@ fn preset(_: &mut Session, v: &Value) -> CmdResult {
         (Some(OAuthProvider::Microsoft), own) => {
             (Some(provider::microsoft(own.is_some_and(|p| p.oauth == Some(OAuthProvider::Microsoft) && p.service == "Outlook.com"))), "asked")
         }
+        // Said to be Google's (signed in on Google's page): Gmail, or Google Workspace for a
+        // domain of the owner's own.
+        (Some(OAuthProvider::Google), own) => (Some(provider::google(!own.as_ref().is_some_and(|p| p.service == "Gmail"))), "asked"),
         (None, Some(own)) => (Some(own), "domain"),
         (None, None) => (by_mx(), "mx"),
     };
@@ -823,10 +826,18 @@ fn remote_ops(s: &Session, account: Id, limit: usize) -> (Vec<RemoteOp>, usize) 
         }
     }
     for m in mb.messages.values() {
-        let Some(base) = m.synced.filter(|base| m.uid != 0 && base.uid == m.uid && m.account == account) else { continue };
-        let Some([read, flagged, answered]) = flag_changes(m, base) else { continue };
+        if m.uid == 0 || m.account != account {
+            continue;
+        }
         let Some(folder) = folders.get(&m.folder).copied().filter(followed) else { continue };
-        note(&|| Some(RemoteOp::Flags { folder: folder.remote.clone(), uid: m.uid, read, flagged, answered }));
+        if let Some(base) = m.synced.filter(|base| base.uid == m.uid)
+            && let Some([read, flagged, answered]) = flag_changes(m, base)
+        {
+            note(&|| Some(RemoteOp::Flags { folder: folder.remote.clone(), uid: m.uid, read, flagged, answered }));
+        }
+        if let Some((add, remove)) = label_changes(m) {
+            note(&|| Some(RemoteOp::Labels { folder: folder.remote.clone(), uid: m.uid, add: add.clone(), remove: remove.clone() }));
+        }
     }
     (ops, count)
 }
@@ -861,6 +872,82 @@ fn place_ops(s: &Session, account: Id, limit: usize) -> (Vec<ImapPlace>, usize) 
         }
     }
     (out, count)
+}
+
+/// Gmail: the labels to put on a message and to take off it, for its categories here to be its
+/// labels there; `None` when they are already, or for a message whose labels Gmail hasn't said.
+fn label_changes(m: &Message) -> Option<(Vec<String>, Vec<String>)> {
+    let synced = m.synced_labels.as_ref()?;
+    let here = own_labels(&m.categories);
+    let add: Vec<String> = here.iter().filter(|l| !synced.contains(l)).cloned().collect();
+    let remove: Vec<String> = synced.iter().filter(|l| !here.contains(l)).cloned().collect();
+    (!add.is_empty() || !remove.is_empty()).then_some((add, remove))
+}
+
+/// Gmail: take in a message's labels as the server has them now (`theirs`), three ways: a label
+/// put on or taken off here since the server last said stays so (and goes up next time), every
+/// other follows the server. Answers whether its categories changed.
+fn merge_labels(mb: &mut Mailbox, id: Id, theirs: &[String]) -> bool {
+    let Some(m) = mb.message(id) else { return false };
+    let theirs = own_labels(theirs);
+    let here = own_labels(&m.categories);
+    let merged = match &m.synced_labels {
+        Some(synced) => {
+            let added = here.iter().filter(|l| !synced.contains(l));
+            let removed: Vec<&String> = synced.iter().filter(|l| !here.contains(l)).collect();
+            own_labels(&theirs.iter().chain(added).filter(|l| !removed.contains(l)).cloned().collect::<Vec<_>>())
+        }
+        // Labels said for the first time: the server's, with what was put on here meanwhile.
+        None => own_labels(&theirs.iter().chain(here.iter()).cloned().collect::<Vec<_>>()),
+    };
+    let changed = merged != here;
+    if (changed || m.synced_labels.as_ref() != Some(&theirs))
+        && let Ok(m) = mb.message_mut(id)
+    {
+        if changed {
+            m.categories = merged.clone();
+        }
+        m.synced_labels = Some(theirs);
+    }
+    register_labels(mb, &merged);
+    changed
+}
+
+/// Gmail labels the category list doesn't have yet join it, each with a colour of its own (the
+/// same for a name every time), so that they show as categories do.
+fn register_labels(mb: &mut Mailbox, labels: &[String]) {
+    const COLOURS: [(u8, u8, u8); 8] = [
+        (0x2F, 0x6F, 0xD0),
+        (0x2E, 0x8B, 0x57),
+        (0xE0, 0x7B, 0x1F),
+        (0x8E, 0x44, 0xAD),
+        (0xD1, 0x3B, 0x3B),
+        (0x16, 0x8A, 0x8A),
+        (0xB0, 0x7A, 0x0C),
+        (0x5A, 0x6B, 0x7D),
+    ];
+    for label in labels {
+        if mb.category(label).is_some() {
+            continue;
+        }
+        let hash = label.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)));
+        let (r, g, b) = COLOURS.get(hash % COLOURS.len()).copied().unwrap_or((0x8A, 0x8A, 0x8A));
+        // A label that can't be a category's name stays a name without a colour.
+        let _ = mb.set_category(label, mailcraft_model::Rgb(r, g, b));
+    }
+}
+
+/// Gmail label changes the server took on: what it has of each message is that now.
+fn labels_pushed(mb: &mut Mailbox, on_server: &OnServer, pushed: &[LabelsPushed]) {
+    for change in pushed {
+        let message = on_server.by_remote.get(&change.folder).and_then(|folder| on_server.by_uid.get(&(*folder, change.uid))).copied();
+        let Some(id) = message else { continue };
+        let Some(synced) = mb.message(id).and_then(|m| m.synced_labels.clone()) else { continue };
+        let now = own_labels(&synced.iter().chain(&change.add).filter(|l| !change.remove.contains(l)).cloned().collect::<Vec<_>>());
+        if let Ok(m) = mb.message_mut(id) {
+            m.synced_labels = Some(now);
+        }
+    }
 }
 
 fn request(s: &mut Session, v: &Value) -> CmdResult {
@@ -1086,6 +1173,7 @@ fn take_in_news(s: &mut Session, account: Id, result: &mut SyncResult) -> (Count
     }
     let mut on_server = OnServer::of(mb, account);
     flags_pushed(mb, account, &on_server, &result.flagged);
+    labels_pushed(mb, &on_server, &result.labeled);
     for moved in &result.moved {
         move_finished(mb, account, &mut on_server, moved);
     }
@@ -1759,6 +1847,11 @@ fn take_in(mb: &mut Mailbox, account: Id, on_server: &mut OnServer, delta: Folde
             counts.updated += usize::from(merge_flags(mb, *id, *theirs));
         }
     }
+    for theirs in &delta.labels {
+        if let Some(id) = on_server.by_uid.get(&(folder, theirs.uid)).copied() {
+            counts.updated += usize::from(merge_labels(mb, id, &theirs.labels));
+        }
+    }
     let inbox = delta.kind == FolderKind::Inbox;
     let junk = delta.kind == FolderKind::Junk;
     // The lists sort what arrives once the folder has been read whole, above how far it was
@@ -1797,6 +1890,9 @@ fn take_in(mb: &mut Mailbox, account: Id, on_server: &mut OnServer, delta: Folde
         m.id = 0;
         m.folder = folder;
         m.synced = (uid != 0).then(|| RemoteFlags::of(&m, uid));
+        if let Some(labels) = m.synced_labels.clone() {
+            register_labels(mb, &labels);
+        }
         let Ok(id) = mb.add_message(m) else { continue };
         if uid != 0 {
             on_server.by_uid.insert((folder, uid), id);

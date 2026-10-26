@@ -672,12 +672,16 @@ pub enum OAuthProvider {
     /// Outlook.com and Microsoft 365.
     #[default]
     Microsoft,
+    /// Gmail and Google Workspace: IMAP and SMTP take a Google access token (SASL XOAUTH2), and
+    /// the same token is good for the Gmail API.
+    Google,
 }
 
 impl OAuthProvider {
     pub fn parse(s: &str) -> Option<OAuthProvider> {
         match s.trim().to_ascii_lowercase().as_str() {
             "microsoft" | "outlook" | "office365" | "microsoft365" => Some(OAuthProvider::Microsoft),
+            "google" | "gmail" | "googleworkspace" => Some(OAuthProvider::Google),
             _ => None,
         }
     }
@@ -685,12 +689,14 @@ impl OAuthProvider {
     pub fn code(self) -> &'static str {
         match self {
             OAuthProvider::Microsoft => "microsoft",
+            OAuthProvider::Google => "google",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             OAuthProvider::Microsoft => "Microsoft",
+            OAuthProvider::Google => "Google",
         }
     }
 }

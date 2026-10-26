@@ -541,6 +541,7 @@ fn message() -> impl Strategy<Value = Message> {
             held: String::new(),
             answers: None,
             kept: None,
+            synced_labels: None,
             snoozed_until: None,
             send_at: None,
             awaiting_reply: false,

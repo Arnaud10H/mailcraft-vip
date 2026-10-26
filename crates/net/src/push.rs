@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use mailcraft_mime::{PLACE_HEADER, WriteOptions};
 use mailcraft_model::sync::{
-    Created, Deleted, FlagsPushed, ImapPlace, MAX_PLACES, Moved, Placed, RemoteFlags, RemoteOp, SyncRequest, SyncResult, SyncStage, SyncStep,
+    Created, Deleted, FlagsPushed, ImapPlace, LabelsPushed, MAX_PLACES, Moved, Placed, RemoteFlags, RemoteOp, SyncRequest, SyncResult, SyncStage, SyncStep,
 };
 use mailcraft_model::{FolderKind, Id};
 use mailcraft_proto::ProtoError;
@@ -67,7 +67,7 @@ pub(crate) fn push(run: &mut Run, imap: &mut Imap<Stream<'_>>, mailboxes: &[Mail
         arrived: Arrived::new(),
         searching: None,
     };
-    if ops.iter().any(|op| !matches!(op, RemoteOp::Flags { .. })) || !request.places.is_empty() {
+    if ops.iter().any(|op| !matches!(op, RemoteOp::Flags { .. } | RemoteOp::Labels { .. })) || !request.places.is_empty() {
         // Asked now: what a server can do is often only told once it knows who is asking.
         match imap.capabilities() {
             Ok(capabilities) => {
@@ -210,11 +210,12 @@ impl<'a> Push<'a> {
         result: &mut SyncResult,
     ) -> Result<(), bool> {
         self.flags(imap, remote, name, ops, result)?;
+        self.labels(imap, remote, name, ops, result)?;
         let leaving: Vec<u32> = ops
             .iter()
             .filter_map(|op| match op {
                 RemoteOp::Move { uid, .. } | RemoteOp::Delete { uid, .. } => Some(*uid),
-                RemoteOp::Flags { .. } => None,
+                RemoteOp::Flags { .. } | RemoteOp::Labels { .. } => None,
             })
             .collect();
         if leaving.is_empty() {
@@ -269,6 +270,26 @@ impl<'a> Push<'a> {
         }
         result.flagged.extend(pushed.into_values());
         outcome
+    }
+
+    /// Gmail: the labels put on and taken off each message, one UID STORE per direction. A
+    /// label Gmail doesn't have yet is made by it.
+    fn labels(&mut self, imap: &mut Imap<Stream<'_>>, remote: &str, name: &str, ops: &[&RemoteOp], result: &mut SyncResult) -> Result<(), bool> {
+        for op in ops {
+            let RemoteOp::Labels { uid, add, remove, .. } = op else { continue };
+            for (on, labels) in [(true, add), (false, remove)] {
+                if let Err(e) = imap.uid_store_labels(*uid, on, labels) {
+                    // A label that can't be one is that message's trouble only.
+                    if matches!(e, ProtoError::Protocol(_)) {
+                        result.errors.push(format!("Couldn't change the labels of a message in \"{name}\": {e}"));
+                        break;
+                    }
+                    return Err(stop(result, format!("Couldn't change labels in \"{name}\": {e}"), &e.into()));
+                }
+            }
+            result.labeled.push(LabelsPushed { folder: remote.to_string(), uid: *uid, add: add.clone(), remove: remove.clone() });
+        }
+        Ok(())
     }
 
     /// Move the messages that are still there, one command per destination.

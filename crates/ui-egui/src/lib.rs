@@ -254,6 +254,10 @@ pub struct Services {
     /// The application (client) id this build presents to Microsoft when neither the account nor
     /// the settings name one; empty when the build has none.
     pub microsoft_client_id: String,
+    /// The same for Google: the application (client) id of the installation's own Google
+    /// project. While it is empty, Gmail takes an app password as before; once there is one, a
+    /// Gmail account signs in on Google's page.
+    pub google_client_id: String,
     /// Keep the mailbox where the host stores it (the browser's storage); called a moment after
     /// each change. Desktop saves to the mailbox file instead (see `saver`).
     pub persist: Option<Box<dyn Fn(&[u8]) -> Result<(), String>>>,
@@ -2426,6 +2430,9 @@ impl MailApp {
         if oauth.client_id.is_empty() && oauth.provider == mailcraft_model::OAuthProvider::Microsoft {
             let own = &self.ui.microsoft_client_id;
             oauth.client_id = if own.is_empty() { self.services.microsoft_client_id.clone() } else { own.clone() };
+        }
+        if oauth.client_id.is_empty() && oauth.provider == mailcraft_model::OAuthProvider::Google {
+            oauth.client_id = self.services.google_client_id.clone();
         }
         oauth
     }

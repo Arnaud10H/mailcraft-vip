@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mailcraft_mime::WriteOptions;
-use mailcraft_model::sync::{FolderDelta, FolderState, RemoteFlags, SyncPhase, SyncRequest, SyncResult, SyncStage, SyncStep};
+use mailcraft_model::sync::{FolderDelta, FolderState, RemoteFlags, ServerLabels, SyncPhase, SyncRequest, SyncResult, SyncStage, SyncStep, own_labels};
 use mailcraft_model::{Account, Body, FlagStatus, FolderKind, Id, Message, Security, Server};
 use mailcraft_proto::ProtoError;
 use mailcraft_proto::imap::{Fetched, Imap, Mailbox, uid_sets};
@@ -595,6 +595,15 @@ fn exchange<'a>(run: &mut Run<'a>, sent: &[Message], host: Host) -> Option<Imap<
             return alive.then_some(imap);
         }
     };
+    // Gmail: labels come with flags and messages, and are what categories are kept in step with.
+    if request.account.incoming.as_ref().is_some_and(|server| is_gmail(&server.host)) {
+        match imap.ask_gmail_labels() {
+            Ok(true) => log::debug!("Gmail's labels are read and written as categories"),
+            Ok(false) => {}
+            // Only a question: without an answer the labels are left alone.
+            Err(e) => log::debug!("couldn't ask the server what it can do: {e}"),
+        }
+    }
     // Folders that already follow a server mailbox keep their job.
     let tied: Vec<(&str, FolderKind)> = request.folders.iter().filter(|f| !f.remote.is_empty()).map(|f| (f.remote.as_str(), f.kind)).collect();
     let plan = planned(&mailboxes, &tied, host.microsoft);
@@ -688,7 +697,30 @@ fn message_from(fetched: Fetched) -> Message {
     message.draft = flags.draft;
     message.forwarded |= has(&fetched.flags, "$Forwarded");
     message.received = fetched.internal_date.as_deref().and_then(internal_date).unwrap_or(message.date);
+    // Gmail: the owner's own labels are the message's categories, as the server has them.
+    if let Some(labels) = &fetched.labels {
+        let own = own_labels(labels);
+        message.categories = own.clone();
+        message.synced_labels = Some(own);
+    }
     message
+}
+
+/// Whether `host` is Gmail's IMAP server (Gmail and Google Workspace), whose labels are read and
+/// written as the messages' categories.
+pub(crate) fn is_gmail(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    #[cfg(test)]
+    if GMAIL_HERE.with(std::cell::Cell::get) {
+        return true;
+    }
+    host == "imap.gmail.com" || host == "imap.googlemail.com"
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the fake server on loopback is taken for Gmail's, on this thread.
+    pub(crate) static GMAIL_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// What is kept of a message that is too large to download (`size` bytes, where `largest` is
@@ -803,6 +835,12 @@ impl FolderSync<'_> {
             uid_from: 0,
             new: Vec::new(),
             flags: known.iter().filter_map(|uid| present.get(uid).map(|m| remote_flags(m))).collect(),
+            labels: known
+                .iter()
+                .filter_map(|uid| {
+                    present.get(uid).and_then(|m| m.labels.as_deref()).map(|labels| ServerLabels { uid: *uid, labels: own_labels(labels) })
+                })
+                .collect(),
             removed: match self.state {
                 Some(state) if reset => state.known_uids.iter().copied().filter(|uid| *uid != 0).collect(),
                 _ => known.iter().copied().filter(|uid| !present.contains_key(uid)).collect(),
@@ -1188,6 +1226,7 @@ mod tests {
             flags: vec!["\\Seen".into(), "\\Flagged".into()],
             internal_date: Some(" 1-Jul-2003 09:52:37 +0000".into()),
             body: Some(header.to_vec()),
+            labels: None,
         };
         let m = too_large(fetched, 60 * 1024 * 1024 + 1, MAX_MESSAGE);
         assert_eq!(

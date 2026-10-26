@@ -77,13 +77,23 @@ pub enum RemoteOp {
     },
     /// The message that is `uid` in `from` was deleted for good.
     Delete { from: String, uid: u32 },
+    /// Gmail: labels to put on the message that is `uid` in `folder`, and labels to take off it
+    /// (its categories here, changed since the server last said its labels).
+    Labels {
+        folder: String,
+        uid: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        add: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove: Vec<String>,
+    },
 }
 
 impl RemoteOp {
     /// The server mailbox the change is made in.
     pub fn mailbox(&self) -> &str {
         match self {
-            RemoteOp::Flags { folder, .. } => folder,
+            RemoteOp::Flags { folder, .. } | RemoteOp::Labels { folder, .. } => folder,
             RemoteOp::Move { from, .. } | RemoteOp::Delete { from, .. } => from,
         }
     }
@@ -477,6 +487,45 @@ pub struct FolderDelta {
     /// the folder has been read whole once ([`crate::Folder::read_whole`]).
     #[serde(skip_serializing_if = "is_false")]
     pub complete: bool,
+    /// Gmail: the labels of messages the mailbox already had, as the server has them now (the
+    /// owner's own labels, not Gmail's system ones). Empty for any other server.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<ServerLabels>,
+}
+
+/// A message's Gmail labels on the server: the owner's own, sorted, without Gmail's system
+/// labels (`\Inbox`, `\Important`…), which are folders and flags here.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerLabels {
+    pub uid: u32,
+    pub labels: Vec<String>,
+}
+
+/// The owner's own labels among those Gmail gives a message, sorted and each once: what is
+/// kept of them as its categories.
+pub fn own_labels(labels: &[String]) -> Vec<String> {
+    let mut own: Vec<String> = labels
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty() && !label.starts_with('\\') && !label.chars().any(char::is_control))
+        .map(|label| label.chars().take(255).collect())
+        .collect();
+    own.sort();
+    own.dedup();
+    own
+}
+
+/// A label change the server took on ([`RemoteOp::Labels`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LabelsPushed {
+    pub folder: String,
+    pub uid: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub add: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub remove: Vec<String>,
 }
 
 /// A folder of mail the server has, as its list names it ([`SyncResult::listed`]).
@@ -601,6 +650,9 @@ pub struct SyncResult {
     /// tried, and is still to be pushed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub flagged: Vec<FlagsPushed>,
+    /// Gmail label changes the server took on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labeled: Vec<LabelsPushed>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub moved: Vec<Moved>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -647,7 +699,7 @@ impl SyncResult {
 
     /// How many changes made here the server took on.
     pub fn pushed_count(&self) -> usize {
-        self.flagged.len() + self.moved.len() + self.deleted.len() + self.created.len() + self.placed.len() + self.unplaced.len()
+        self.flagged.len() + self.labeled.len() + self.moved.len() + self.deleted.len() + self.created.len() + self.placed.len() + self.unplaced.len()
     }
 
     /// Whether there is anything in it for a mailbox to take in. A piece with only a line of
@@ -677,6 +729,7 @@ impl SyncResult {
         self.filed.extend(later.filed);
         self.unfiled.extend(later.unfiled);
         self.flagged.extend(later.flagged);
+        self.labeled.extend(later.labeled);
         self.moved.extend(later.moved);
         self.deleted.extend(later.deleted);
         self.created.extend(later.created);
@@ -697,6 +750,7 @@ impl SyncResult {
                     }
                     folder.new.extend(delta.new);
                     folder.flags.extend(delta.flags);
+                    folder.labels.extend(delta.labels);
                     folder.removed.extend(delta.removed);
                     folder.complete |= delta.complete;
                 }

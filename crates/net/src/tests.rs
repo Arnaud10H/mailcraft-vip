@@ -35,7 +35,14 @@ fn eml(subject: &str) -> Vec<u8> {
 }
 
 fn message(uid: u32, flags: &str, subject: &str) -> FakeMessage {
-    FakeMessage { uid, flags: flags.into(), internal_date: " 1-Jul-2003 09:52:37 +0000".into(), body: eml(subject), claimed_size: None }
+    FakeMessage {
+        uid,
+        flags: flags.into(),
+        internal_date: " 1-Jul-2003 09:52:37 +0000".into(),
+        body: eml(subject),
+        claimed_size: None,
+        labels: Vec::new(),
+    }
 }
 
 fn mailbox(raw: &str, flags: &str, uid_validity: u32, messages: Vec<FakeMessage>) -> FakeMailbox {
@@ -2471,4 +2478,61 @@ fn a_server_that_floods_one_answer_is_given_up_on() {
         // Nothing of the flood is taken in.
         assert!(result.folders.iter().all(|folder| folder.new.is_empty()), "{at}");
     }
+}
+
+/// Gmail: labels come down as the messages' categories and as what the server has of the ones
+/// known; label changes made here go up, and the server has them after.
+#[test]
+fn gmail_labels_come_down_as_categories_and_go_up_as_label_changes() {
+    crate::sync::GMAIL_HERE.with(|here| here.set(true));
+    let mut world = imap_world();
+    world.gmail = true;
+    {
+        let inbox = inbox(&mut world);
+        inbox.messages[0].labels = vec!["\\Important".into(), "Clients".into(), "Été".into()];
+        inbox.messages[1].labels = vec!["\\Inbox".into()];
+    }
+    let imap = Fake::imap(world);
+    let account = account(Some(&imap), None);
+    let first = sync(&request(account.clone(), local_folders()));
+    assert_eq!(first.errors, Vec::<String>::new());
+    let delta = first.folders.iter().find(|f| f.remote == "INBOX").unwrap();
+    let one = delta.new.iter().find(|m| m.uid == 1).unwrap();
+    // The owner's own labels, not Gmail's system ones.
+    assert_eq!(one.categories, ["Clients", "Été"]);
+    assert_eq!(one.synced_labels.as_deref(), Some(&["Clients".to_string(), "Été".into()][..]));
+    assert_eq!(delta.new.iter().find(|m| m.uid == 2).unwrap().synced_labels.as_deref(), Some(&[][..]));
+
+    // Here: "Clients" off the first, "Factures" on the second. On the server meanwhile: "Perso" on the first.
+    let folders = applied(&local_folders(), &first);
+    inbox(&mut imap.world()).messages[0].labels.push("Perso".into());
+    let mut req = request(account.clone(), folders.clone());
+    req.ops = vec![
+        RemoteOp::Labels { folder: "INBOX".into(), uid: 1, add: vec![], remove: vec!["Clients".into()] },
+        RemoteOp::Labels { folder: "INBOX".into(), uid: 2, add: vec!["Factures".into()], remove: vec![] },
+    ];
+    let second = sync(&req);
+    assert_eq!(second.errors, Vec::<String>::new());
+    assert_eq!(second.labeled.len(), 2);
+    {
+        let mut world = imap.world();
+        let inbox = inbox(&mut world);
+        assert_eq!(inbox.messages[0].labels, ["\\Important", "Été", "Perso"]);
+        assert_eq!(inbox.messages[1].labels, ["\\Inbox", "Factures"]);
+    }
+    // What is read after the push shows it, with what was done elsewhere.
+    let delta = second.folders.iter().find(|f| f.remote == "INBOX").unwrap();
+    let labels = |uid: u32| delta.labels.iter().find(|l| l.uid == uid).unwrap().labels.clone();
+    assert_eq!((labels(1), labels(2)), (vec!["Perso".to_string(), "Été".into()], vec!["Factures".to_string()]));
+    assert_eq!(imap.world().sent("+X-GM-LABELS.SILENT (\"Factures\")"), 1);
+    crate::sync::GMAIL_HERE.with(|here| here.set(false));
+}
+
+/// Any other server is never asked for labels, and its answer carries none.
+#[test]
+fn other_servers_are_not_asked_for_labels() {
+    let imap = Fake::imap(imap_world());
+    let result = sync(&request(account(Some(&imap), None), local_folders()));
+    assert!(result.folders.iter().all(|f| f.labels.is_empty() && f.new.iter().all(|m| m.synced_labels.is_none())));
+    assert_eq!(imap.world().sent("X-GM-LABELS"), 0);
 }

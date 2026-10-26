@@ -448,6 +448,16 @@ fn microsoft_client_id() -> String {
     if id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) { id.to_string() } else { String::new() }
 }
 
+/// The application (client) id of this installation's Google project ("Desktop app" OAuth
+/// client): `MAILCRAFT_GOOGLE_CLIENT_ID` when the app starts, else the one the build was given
+/// under the same name. Empty when there is none: Gmail then takes an app password.
+fn google_client_id() -> String {
+    let built_in = option_env!("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or_default().to_string();
+    let id = std::env::var("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or(built_in);
+    let id = id.trim();
+    if id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) { id.to_string() } else { String::new() }
+}
+
 /// Open one of Microsoft's pages in the system's browser: whether a browser could be started.
 /// (Made here, rather than through the window's own links, so that a browser that can't be
 /// started is known of, instead of leaving the owner looking at a page that waits.) On Linux and
@@ -1579,6 +1589,7 @@ fn services(
         updates_turned_off_by_organisation: updater::turned_off_by_organisation(),
         // The system's language, for an interface language left on Automatic.
         system_locale: system_locale::system_locale(),
+        google_client_id: google_client_id(),
         ..Default::default()
     }
 }

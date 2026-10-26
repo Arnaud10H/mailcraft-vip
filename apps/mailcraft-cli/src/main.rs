@@ -451,8 +451,13 @@ fn run(args: &[String]) -> Result<(), Failure> {
                         Err(_) => {
                             if oauth.client_id.is_empty() {
                                 // The one named when this runs, else the one the build was given.
-                                let built_in = option_env!("MAILCRAFT_MS_CLIENT_ID").unwrap_or_default().to_string();
-                                oauth.client_id = std::env::var("MAILCRAFT_MS_CLIENT_ID").unwrap_or(built_in);
+                                let (built_in, name) = match oauth.provider {
+                                    mailcraft_model::OAuthProvider::Microsoft => (option_env!("MAILCRAFT_MS_CLIENT_ID"), "MAILCRAFT_MS_CLIENT_ID"),
+                                    mailcraft_model::OAuthProvider::Google => {
+                                        (option_env!("MAILCRAFT_GOOGLE_CLIENT_ID"), "MAILCRAFT_GOOGLE_CLIENT_ID")
+                                    }
+                                };
+                                oauth.client_id = std::env::var(name).unwrap_or(built_in.unwrap_or_default().to_string());
                             }
                             let open = |url: &str| {
                                 eprintln!(

@@ -726,6 +726,17 @@ impl AccountSetup {
         if self.picked { Page::Choose } else { Page::Address }
     }
 
+    /// Take over what `account.preset` answered, Gmail signed in on Google's page when this
+    /// installation has a Google application id (else with an app password, as before).
+    fn take_for(&mut self, app: &MailApp, mut preset: Preset) {
+        let gmail = preset.oauth.is_none() && preset.incoming.server().is_some_and(|s| is_google(&s.host));
+        if gmail && !app.services.google_client_id.trim().is_empty() {
+            preset.oauth = Some(OAuthProvider::Google);
+            preset.note = tl!("Google accounts sign in on Google's own page; no password is typed here.").to_string();
+        }
+        self.take(preset);
+    }
+
     /// Take over what `account.preset` answered.
     fn take(&mut self, preset: Preset) {
         self.service = preset.service;
@@ -841,7 +852,7 @@ impl AccountSetup {
             }
         };
         let known = preset.known;
-        self.take(preset);
+        self.take_for(app, preset);
         if known {
             self.proceed(app);
             return;
@@ -866,8 +877,11 @@ impl AccountSetup {
             return;
         };
         // Without an application ID Microsoft shows no sign-in page. A build that can't sign in
-        // at all says that instead of asking for one.
-        if app.services.sign_in.is_some() && app.effective_oauth(oauth).client_id.is_empty() {
+        // at all says that instead of asking for one. (Google is only offered with one.)
+        if oauth.provider == OAuthProvider::Google && app.effective_oauth(oauth.clone()).client_id.is_empty() {
+            self.oauth = None;
+            self.go(Page::Password);
+        } else if app.services.sign_in.is_some() && app.effective_oauth(oauth).client_id.is_empty() {
             self.client_id.clear();
             self.go(Page::ApplicationId);
         } else {
@@ -901,7 +915,7 @@ impl AccountSetup {
             // a look.
             (preset.oauth, preset.service, preset.note) = (None, String::new(), String::new());
         }
-        self.take(preset);
+        self.take_for(app, preset);
         self.settings_open = kind == Kind::Other;
         self.proceed(app);
     }
@@ -2510,6 +2524,37 @@ mod tests {
         click(&mut h, "Back");
         assert!(wizard(&h).is_some_and(|w| !w.app_passwords));
         assert!(is_google("imap.gmail.com") && is_google("IMAP.GMAIL.COM.") && !is_google("imap.example.org") && !is_google("notgmail.com"));
+    }
+
+    /// With a Google application id, Gmail signs in on Google's page (OAuth, XOAUTH2 to the same
+    /// servers) instead of asking for an app password.
+    #[test]
+    fn gmail_signs_in_on_googles_page_when_there_is_a_google_application_id() {
+        let mut a = app(false);
+        a.services.google_client_id = "g-client.apps.googleusercontent.example".into();
+        let signed = sign_ins(&mut a, Some(Ok(signed_in("Noor Haddad"))));
+        let _synced = syncs(&mut a);
+        let mut h = open(a, json!({}));
+        connect(&mut h, "noor@gmail.com");
+        h.run_steps(4);
+        assert_eq!(page(&h), Some(Page::Done));
+        {
+            let signed = signed.lock().unwrap();
+            assert_eq!((signed.len(), signed[0].1.as_str()), (1, "g-client.apps.googleusercontent.example"));
+        }
+        let s = &h.state().session;
+        let account = s.mailbox.accounts.iter().find(|a| a.email == "noor@gmail.com").unwrap();
+        assert_eq!(account.oauth.as_ref().map(|o| o.provider), Some(OAuthProvider::Google));
+        assert_eq!(account.incoming.as_ref().map(|s| s.host.as_str()), Some("imap.gmail.com"));
+    }
+
+    /// Without one, Gmail is as it was: an app password.
+    #[test]
+    fn gmail_keeps_the_app_password_without_a_google_application_id() {
+        let mut h = open(app(false), json!({}));
+        connect(&mut h, "noor@gmail.com");
+        assert_eq!(page(&h), Some(Page::Password));
+        assert!(wizard(&h).is_some_and(|w| w.oauth.is_none()));
     }
 
     /// (b) A provider that takes a password: the servers are tried before the account is added.

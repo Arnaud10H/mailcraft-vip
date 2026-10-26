@@ -12,7 +12,7 @@ fn mailbox(name: &str, raw: &str, delimiter: Option<char>, flags: &[&str]) -> Ma
 }
 
 fn fetched(uid: u32, flags: &[&str]) -> Fetched {
-    Fetched { uid, flags: flags.iter().map(|f| f.to_string()).collect(), internal_date: None, body: None }
+    Fetched { uid, flags: flags.iter().map(|f| f.to_string()).collect(), internal_date: None, body: None, labels: None }
 }
 
 /// A FETCH response carrying `body` as a literal, between `before` and `after`.
@@ -350,7 +350,8 @@ fn a_message_arrives_whole_whatever_is_in_it() {
             uid: 12,
             flags: vec!["\\Seen".into(), "$Forwarded".into()],
             internal_date: Some("17-Jul-1996 02:44:25 -0700".into()),
-            body: Some(body.to_vec())
+            body: Some(body.to_vec()),
+            labels: None
         }
     );
     assert_eq!(s.sent(), "A0001 UID FETCH 12 (UID FLAGS INTERNALDATE BODY.PEEK[])\r\n");
@@ -426,7 +427,13 @@ fn a_header_arrives_alone() {
     let got = Imap::resume(&mut s).uid_fetch_header(12).unwrap().unwrap();
     assert_eq!(
         got,
-        Fetched { uid: 12, flags: vec!["\\Seen".into()], internal_date: Some("17-Jul-1996 02:44:25 -0700".into()), body: Some(header.to_vec()) }
+        Fetched {
+            uid: 12,
+            flags: vec!["\\Seen".into()],
+            internal_date: Some("17-Jul-1996 02:44:25 -0700".into()),
+            body: Some(header.to_vec()),
+            labels: None
+        }
     );
     assert_eq!(s.sent(), "A0001 UID FETCH 12 (UID FLAGS INTERNALDATE BODY.PEEK[HEADER])\r\n");
     assert!(s.finished());
@@ -1030,4 +1037,58 @@ proptest! {
         prop_assert_eq!(list.len(), 1);
         prop_assert_eq!(&list[0].raw, &name);
     }
+}
+
+#[test]
+fn gmail_labels_are_asked_for_only_where_the_server_offers_them() {
+    let mut s = Script::new(
+        "* CAPABILITY IMAP4rev1 X-GM-EXT-1\r\nA0001 OK done\r\n* 1 FETCH (UID 4 X-GM-LABELS (\"\\\\Inbox\" Clients \"Factures 2026\" \"&AMk-t&AOk-\") FLAGS (\\Seen))\r\nA0002 OK done\r\n",
+    );
+    let mut imap = Imap::resume(&mut s);
+    assert!(imap.ask_gmail_labels().unwrap());
+    let got = imap.uid_fetch_flags("1:*").unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].flags, ["\\Seen"]);
+    assert_eq!(got[0].labels.as_deref(), Some(&["\\Inbox".to_string(), "Clients".into(), "Factures 2026".into(), "Été".into()][..]));
+    assert_eq!(s.sent(), "A0001 CAPABILITY\r\nA0002 UID FETCH 1:* (UID FLAGS X-GM-LABELS)\r\n");
+
+    // Elsewhere nothing changes.
+    let mut s = Script::new("* CAPABILITY IMAP4rev1\r\nA0001 OK done\r\n* 1 FETCH (UID 4 FLAGS ())\r\nA0002 OK done\r\n");
+    let mut imap = Imap::resume(&mut s);
+    assert!(!imap.ask_gmail_labels().unwrap());
+    assert_eq!(imap.uid_fetch_flags("1:*").unwrap()[0].labels, None);
+    assert_eq!(s.sent(), "A0001 CAPABILITY\r\nA0002 UID FETCH 1:* (UID FLAGS)\r\n");
+}
+
+#[test]
+fn a_whole_message_comes_with_its_gmail_labels() {
+    let body = b"Subject: Hi\r\n\r\nHello\r\n";
+    let mut server =
+        with_literal("* 1 FETCH (UID 9 X-GM-LABELS (Clients) FLAGS () INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" BODY[] ", body, ")\r\n");
+    server.extend_from_slice(b"A0001 OK done\r\n");
+    let mut s = Script::new(std::str::from_utf8(&server).unwrap());
+    let mut imap = Imap::resume(&mut s);
+    imap.capabilities = Some(vec!["X-GM-EXT-1".into()]);
+    assert!(imap.ask_gmail_labels().unwrap());
+    let got = imap.uid_fetch_message(9).unwrap().unwrap();
+    assert_eq!(got.labels.as_deref(), Some(&["Clients".to_string()][..]));
+    assert_eq!(s.sent(), "A0001 UID FETCH 9 (UID FLAGS INTERNALDATE BODY.PEEK[] X-GM-LABELS)\r\n");
+}
+
+#[test]
+fn gmail_labels_are_stored_quoted_in_modified_utf7() {
+    let mut s = Script::new("A0001 OK done\r\nA0002 OK done\r\n");
+    let mut imap = Imap::resume(&mut s);
+    imap.uid_store_labels(7, true, &["Clients".into(), "Été \"x\"".into()]).unwrap();
+    imap.uid_store_labels(7, false, &["Old".into()]).unwrap();
+    // Nothing to do, nothing sent; and what can't be a label is refused before anything goes.
+    imap.uid_store_labels(7, true, &[]).unwrap();
+    for bad in ["", "  ", "\\Inbox", "a\r\nA0003 LOGOUT"] {
+        assert!(matches!(imap.uid_store_labels(7, true, &[bad.to_string()]), Err(ProtoError::Protocol(_))), "{bad:?}");
+    }
+    assert!(matches!(imap.uid_store_labels(0, true, &["Clients".into()]), Err(ProtoError::Protocol(_))));
+    assert_eq!(
+        s.sent(),
+        "A0001 UID STORE 7 +X-GM-LABELS.SILENT (\"Clients\" \"&AMk-t&AOk- \\\"x\\\"\")\r\nA0002 UID STORE 7 -X-GM-LABELS.SILENT (\"Old\")\r\n"
+    );
 }

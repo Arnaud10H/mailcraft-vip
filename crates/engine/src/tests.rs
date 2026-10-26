@@ -882,6 +882,7 @@ fn a_sync_result_lands_in_the_right_folders() {
             flags: vec![RemoteFlags { uid: 12, read: true, flagged: true, ..Default::default() }],
             removed: vec![11],
             complete: true,
+            labels: Vec::new(),
         }],
         ..Default::default()
     };
@@ -973,7 +974,9 @@ fn a_sync_result_lands_in_the_right_folders() {
 // so).
 
 mod two_way {
-    use mailcraft_model::sync::{Created, Deleted, FlagsPushed, FolderDelta, Moved, RemoteFlags, RemoteOp, SyncRequest, SyncResult};
+    use mailcraft_model::sync::{
+        Created, Deleted, FlagsPushed, FolderDelta, LabelsPushed, Moved, RemoteFlags, RemoteOp, ServerLabels, SyncRequest, SyncResult,
+    };
     use mailcraft_model::{Address, Message, Pending};
 
     use super::*;
@@ -2211,6 +2214,69 @@ mod two_way {
         );
         assert!(ops.contains(&RemoteOp::Delete { from: "INBOX".into(), uid: 11 }), "{ops:?}");
         assert_eq!((ops.len(), unpushed(&s, a)), (3, 3));
+    }
+
+    /// Gmail: labels come down as categories; a category put on or taken off here goes up as a
+    /// label change; and what the server says later merges three ways, as flags do.
+    #[test]
+    fn gmail_labels_are_categories_both_ways() {
+        let mut s = session();
+        let servers = json!({"email": "noor@gmail.example", "incoming": {"host": "imap.gmail.com"}, "outgoing": {"host": "smtp.gmail.com"}});
+        let a = run(&mut s, "account.add", servers)["id"].as_u64().unwrap();
+        let labelled = |uid: u32, subject: &str, labels: &[&str]| {
+            let labels: Vec<String> = labels.iter().map(|l| l.to_string()).collect();
+            Message { categories: labels.clone(), synced_labels: Some(labels), ..from_server(uid, subject) }
+        };
+        let first = SyncResult {
+            account: a,
+            folders: vec![news(None, "INBOX", FolderKind::Inbox, 7, vec![labelled(1, "One", &["Clients"]), labelled(2, "Two", &[])], vec![])],
+            ..Default::default()
+        };
+        apply(&mut s, first);
+        let inbox = folder(&s, a, FolderKind::Inbox);
+        let (one, two) = (titled(&s, a, "One"), titled(&s, a, "Two"));
+        // The label is a category, with a colour of its own; nothing is to be pushed.
+        assert!(s.mailbox.category("Clients").is_some_and(|c| c.color != mailcraft_model::Rgb(0x8A, 0x8A, 0x8A)));
+        assert_eq!((unpushed(&s, a), request(&s, a).ops.len()), (0, 0));
+
+        // Put on here and taken off here: label changes.
+        run(&mut s, "mail.categorize", json!({"id": two, "category": "Factures"}));
+        run(&mut s, "mail.categorize", json!({"id": one, "category": "Clients"}));
+        let ops = request(&s, a).ops;
+        assert_eq!(ops.len(), 2, "{ops:?}");
+        assert!(ops.contains(&RemoteOp::Labels { folder: "INBOX".into(), uid: 2, add: vec!["Factures".into()], remove: vec![] }), "{ops:?}");
+        assert!(ops.contains(&RemoteOp::Labels { folder: "INBOX".into(), uid: 1, add: vec![], remove: vec!["Clients".into()] }), "{ops:?}");
+
+        // The server took them, and someone put "Projets" on the second meanwhile.
+        let labels = |uid: u32, labels: &[&str]| ServerLabels { uid, labels: labels.iter().map(|l| l.to_string()).collect() };
+        let took = SyncResult {
+            account: a,
+            labeled: vec![
+                LabelsPushed { folder: "INBOX".into(), uid: 2, add: vec!["Factures".into()], remove: vec![] },
+                LabelsPushed { folder: "INBOX".into(), uid: 1, add: vec![], remove: vec!["Clients".into()] },
+            ],
+            folders: vec![FolderDelta {
+                labels: vec![labels(1, &[]), labels(2, &["Factures", "Projets"])],
+                ..news(Some(inbox), "INBOX", FolderKind::Inbox, 7, vec![], vec![has(1, false, false), has(2, false, false)])
+            }],
+            ..Default::default()
+        };
+        apply(&mut s, took);
+        let categories = |s: &Session, id: Id| s.mailbox.message(id).unwrap().categories.clone();
+        assert_eq!((categories(&s, one), categories(&s, two)), (Vec::<String>::new(), vec!["Factures".to_string(), "Projets".into()]));
+        assert_eq!(unpushed(&s, a), 0);
+
+        // Put on here, not pushed yet, while the server puts another one on: both stay, and only
+        // what was put on here goes up.
+        run(&mut s, "mail.categorize", json!({"id": one, "category": "Urgent"}));
+        let later = SyncResult {
+            account: a,
+            folders: vec![FolderDelta { labels: vec![labels(1, &["Perso"])], ..news(Some(inbox), "INBOX", FolderKind::Inbox, 7, vec![], vec![]) }],
+            ..Default::default()
+        };
+        apply(&mut s, later);
+        assert_eq!(categories(&s, one), ["Perso", "Urgent"]);
+        assert_eq!(request(&s, a).ops, [RemoteOp::Labels { folder: "INBOX".into(), uid: 1, add: vec!["Urgent".into()], remove: vec![] }]);
     }
 }
 

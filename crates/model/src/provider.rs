@@ -24,6 +24,7 @@ pub struct Preset {
 
 const APP_PASSWORD: &str = "This provider wants an app password (made in the account's security settings), not the everyday one.";
 const MICROSOFT: &str = "Microsoft accounts sign in on Microsoft's own page; no password is typed here.";
+const GOOGLE: &str = "Google accounts sign in on Google's own page; no password is typed here.";
 
 fn server(host: &str, port: u16, security: Security) -> Server {
     Server { host: host.to_string(), port, security }
@@ -64,6 +65,19 @@ pub fn authserv_ids(imap_host: &str) -> &'static [&'static str] {
     match imap_host.trim().trim_end_matches('.').to_ascii_lowercase().as_str() {
         "imap.gmail.com" => &["mx.google.com"],
         _ => &[],
+    }
+}
+
+/// Gmail (`workspace`: Google Workspace) signed in on Google's own page: the same servers as
+/// with an app password, which take a Google access token instead (SASL XOAUTH2). Only offered
+/// by a host that has a Google application (client) id; [`by_domain`] keeps the app password.
+pub fn google(workspace: bool) -> Preset {
+    Preset {
+        service: if workspace { "Google Workspace" } else { "Gmail" },
+        oauth: Some(OAuthProvider::Google),
+        incoming: server("imap.gmail.com", 993, Security::Tls),
+        outgoing: server("smtp.gmail.com", 465, Security::Tls),
+        note: GOOGLE,
     }
 }
 

@@ -42,6 +42,7 @@ fn endpoints_of(server: &FakeHttp) -> Endpoints {
         scope: "mail.read mail.send offline_access".into(),
         consent: String::new(),
         lesser: String::new(),
+        dialect: Dialect::Microsoft,
     }
 }
 
@@ -1200,8 +1201,14 @@ fn settings_that_cannot_work_are_refused_before_anything_happens() {
         ("javascript:alert(1)", "https://login.example.org/token"),
         ("", ""),
     ] {
-        let endpoints =
-            Endpoints { authorize: authorize.into(), token: token.into(), scope: "mail".into(), consent: "more".into(), lesser: String::new() };
+        let endpoints = Endpoints {
+            authorize: authorize.into(),
+            token: token.into(),
+            scope: "mail".into(),
+            consent: "more".into(),
+            lesser: String::new(),
+            dialect: Dialect::Microsoft,
+        };
         let why = config(sign_in_at(&endpoints, &oauth(), "", &open, &cancel));
         assert!(why.starts_with("the server's address "), "{why}");
         if !Url::parse(token).is_ok_and(|url| url.secure) {
@@ -2240,4 +2247,51 @@ fn a_graph_accounts_no_for_the_tasks_is_checked_against_graph_mail() {
     assert!(Endpoints::for_resource(&oauth(), Resource::GraphMail).scope.contains("Mail.ReadWrite"));
     assert!(!Endpoints::for_resource(&oauth(), Resource::Mail).scope.contains("Mail.ReadWrite"));
     assert_eq!(kinds, [(true, false), (false, true)]);
+}
+
+fn google() -> OAuth {
+    OAuth { provider: OAuthProvider::Google, client_id: "client-g".into(), ..Default::default() }
+}
+
+#[test]
+fn google_is_one_scope_for_everything_on_googles_own_endpoints() {
+    for resource in [Resource::Mail, Resource::Graph, Resource::GraphMail] {
+        let e = Endpoints::for_resource(&google(), resource);
+        assert_eq!(e.authorize, "https://accounts.google.com/o/oauth2/v2/auth");
+        assert_eq!(e.token, "https://oauth2.googleapis.com/token");
+        assert_eq!(e.scope, "https://mail.google.com/ openid email profile");
+        assert!(e.consent.is_empty() && e.lesser.is_empty() && e.dialect == Dialect::Google, "{e:?}");
+    }
+}
+
+#[test]
+fn googles_page_asks_for_offline_access_and_consent_and_no_response_mode() {
+    let e = Endpoints::of(&google());
+    let url = authorize_url(&e, &e.consent, "client-g", "http://localhost:49152", "the-state", "the-challenge", "noor@gmail.example");
+    let f = fields(url.split_once('?').unwrap().1);
+    assert_eq!(f["access_type"], "offline");
+    assert_eq!(f["prompt"], "consent select_account");
+    assert_eq!(f["code_challenge_method"], "S256");
+    assert_eq!(f["login_hint"], "noor@gmail.example");
+    assert!(!f.contains_key("response_mode"), "{f:?}");
+    // Microsoft's page is as it was.
+    let m = Endpoints::of(&oauth());
+    let url = authorize_url(&m, "", "client-1", "http://localhost:49152", "the-state", "the-challenge", "");
+    let f = fields(url.split_once('?').unwrap().1);
+    assert_eq!((f["response_mode"].as_str(), f["prompt"].as_str()), ("query", "select_account"));
+    assert!(!f.contains_key("access_type"), "{f:?}");
+}
+
+#[test]
+fn a_google_refresh_sends_no_scope_and_keeps_the_refresh_token() {
+    let server = FakeHttp::answering(ok(r#"{"token_type":"Bearer","expires_in":3599,"access_token":"g-access","scope":"https://mail.google.com/"}"#));
+    let endpoints = Endpoints { dialect: Dialect::Google, ..endpoints_of(&server) };
+    let tokens = refresh_at(&endpoints, &google(), "g-refresh").unwrap();
+    assert_eq!((tokens.access.as_str(), tokens.refresh.as_str()), ("g-access", "g-refresh"));
+    let form = form_of(&server, 0);
+    assert_eq!((form["grant_type"].as_str(), form["client_id"].as_str()), ("refresh_token", "client-g"));
+    assert!(!form.contains_key("scope"), "{form:?}");
+    // A secret, when the program has one, goes with it and with nothing of Microsoft's.
+    assert_eq!(form.contains_key("client_secret"), !client_secret(Dialect::Google).is_empty());
+    assert!(client_secret(Dialect::Microsoft).is_empty());
 }

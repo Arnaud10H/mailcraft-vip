@@ -242,6 +242,12 @@ pub struct Message {
     /// from before has none, and one that holds something other than a size there reads as 0.
     #[serde(skip_serializing_if = "is_zero_u64", deserialize_with = "crate::sync::lenient_or_default")]
     pub not_downloaded: u64,
+    /// Gmail: the owner's own labels of the message as the server last had them
+    /// ([`crate::sync::own_labels`]), which are its categories here. Categories that differ were
+    /// changed here and are still to be pushed; `None` for a message of any other server, or one
+    /// Gmail hasn't said the labels of yet.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "crate::sync::lenient")]
+    pub synced_labels: Option<Vec<String>>,
     /// For a message of a Microsoft account that the server has: its server id and what the
     /// server last said of it ([`ServerMessage`], ADR 0003). `None` for a message the server
     /// hasn't got (or hasn't said so yet), and for every message of any other account; `uid` and
