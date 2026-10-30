@@ -59,8 +59,10 @@ fn report(dav: &Dav, password: &str, path: &str, body: &str) -> Result<Vec<DavIt
     let url = Url::parse(&format!("{}{}", dav.url.trim().trim_end_matches('/'), path))?;
     let auth = format!("Basic {}", mailcraft_charset::base64::STANDARD.encode(format!("{}:{password}", dav.username)));
     let headers = [("Authorization", auth.as_str()), ("Depth", "1"), ("Content-Type", "application/xml; charset=utf-8")];
-    let reply =
-        http::request(&url, &Request { method: "REPORT", headers: &headers, body: Some(body.as_bytes()), patience: PATIENCE, max_body: http::MAX_LARGE_BODY })?;
+    let reply = http::request(
+        &url,
+        &Request { method: "REPORT", headers: &headers, body: Some(body.as_bytes()), patience: PATIENCE, max_body: http::MAX_LARGE_BODY },
+    )?;
     match reply.status {
         207 => multistatus(&String::from_utf8_lossy(&reply.body)).ok_or_else(|| NetError::Config("the server's answer couldn't be read".into())),
         401 | 403 => Err(NetError::Config("the server refused the user name or the password (use an app password)".into())),

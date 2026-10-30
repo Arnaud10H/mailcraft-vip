@@ -23,7 +23,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use mailcraft_mime::{PLACE_HEADER, WriteOptions};
 use mailcraft_model::sync::{
-    Created, Deleted, FlagsPushed, ImapPlace, LabelsPushed, MAX_PLACES, Moved, Placed, RemoteFlags, RemoteOp, SyncRequest, SyncResult, SyncStage, SyncStep,
+    Created, Deleted, FlagsPushed, ImapPlace, LabelsPushed, MAX_PLACES, Moved, Placed, RemoteFlags, RemoteOp, SyncRequest, SyncResult, SyncStage,
+    SyncStep,
 };
 use mailcraft_model::{FolderKind, Id};
 use mailcraft_proto::ProtoError;

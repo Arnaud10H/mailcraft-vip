@@ -419,7 +419,7 @@ const OFFERED: &[&str] =
     &["from", "to", "cc", "subject", "body", "category", "attachment", "has", "is", "importance", "before", "after", "on", "received"];
 
 /// What `is:` and `has:` take.
-const IS_VALUES: &[&str] = &["unread", "read", "flagged", "important", "snoozed"];
+const IS_VALUES: &[&str] = &["unread", "read", "flagged", "important"];
 const HAS_VALUES: &[&str] = &["attachment"];
 
 /// A suggestion for the word being typed in the search box (#308): what the list shows, and what

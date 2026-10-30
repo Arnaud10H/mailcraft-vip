@@ -2689,8 +2689,7 @@ pub const LOCAL_CALENDAR: &str = "On this computer";
 /// owner's, is left alone. And a server's calendar that was named after its account, as it once
 /// was, is called what the server calls it.
 fn settle_calendars(mailbox: &mut Mailbox) {
-    // (One that may only be read takes nothing new: the mailbox's own stays beside it.)
-    let server_kept = |mailbox: &Mailbox, calendar: &Calendar| keeper(mailbox, &calendar.origin).is_some() && calendar.rights.can_edit();
+    let server_kept = |mailbox: &Mailbox, calendar: &Calendar| keeper(mailbox, &calendar.origin).is_some();
     if !mailbox.calendars.iter().any(|calendar| server_kept(mailbox, calendar)) {
         return;
     }

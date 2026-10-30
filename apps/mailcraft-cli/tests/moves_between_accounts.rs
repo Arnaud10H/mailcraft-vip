@@ -34,7 +34,14 @@ fn message(uid: u32, flags: &str, subject: &str) -> FakeMessage {
          Message-ID: <{}@example.org>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThe body of {subject}.\r\n",
         subject.to_lowercase()
     );
-    FakeMessage { uid, flags: flags.into(), internal_date: " 1-Jul-2003 09:52:37 +0000".into(), body: body.into_bytes(), claimed_size: None, labels: Vec::new() }
+    FakeMessage {
+        uid,
+        flags: flags.into(),
+        internal_date: " 1-Jul-2003 09:52:37 +0000".into(),
+        body: body.into_bytes(),
+        claimed_size: None,
+        labels: Vec::new(),
+    }
 }
 
 /// A message with a file attached, `report.txt`, whose bytes are [`FIGURES`].

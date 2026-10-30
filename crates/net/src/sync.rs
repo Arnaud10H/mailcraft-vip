@@ -17,7 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mailcraft_mime::WriteOptions;
-use mailcraft_model::sync::{FolderDelta, FolderState, RemoteFlags, ServerLabels, SyncPhase, SyncRequest, SyncResult, SyncStage, SyncStep, own_labels};
+use mailcraft_model::sync::{
+    FolderDelta, FolderState, RemoteFlags, ServerLabels, SyncPhase, SyncRequest, SyncResult, SyncStage, SyncStep, own_labels,
+};
 use mailcraft_model::{Account, Body, FlagStatus, FolderKind, Id, Message, Security, Server};
 use mailcraft_proto::ProtoError;
 use mailcraft_proto::imap::{Fetched, Imap, Mailbox, uid_sets};

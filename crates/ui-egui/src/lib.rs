@@ -1867,7 +1867,7 @@ impl MailApp {
         let edited =
             if id == "account.edit" { params.get("id").and_then(Value::as_u64).and_then(|a| self.session.mailbox.account(a)).cloned() } else { None };
         // Undo and Redo may put an account's servers back as they were before an edit.
-        let keys = |a: &mailcraft_model::Account| ["password", "refresh", "dav"].map(|k| Self::secret_key(k, a));
+        let keys = |a: &mailcraft_model::Account| ["password", "refresh"].map(|k| Self::secret_key(k, a));
         let undone =
             matches!(id, "edit.undo" | "edit.redo").then(|| self.session.mailbox.accounts.iter().map(|a| (a.id, keys(a))).collect::<Vec<_>>());
         if let Some(r) = self.through_saver(id, &params) {
@@ -1927,7 +1927,7 @@ impl MailApp {
         // is asked again.
         if let (Ok(_), Some(before)) = (&r, edited)
             && let Some(after) = self.session.mailbox.account(before.id).cloned()
-            && ["password", "refresh", "dav"].into_iter().any(|k| Self::secret_key(k, &before) != Self::secret_key(k, &after))
+            && ["password", "refresh"].into_iter().any(|k| Self::secret_key(k, &before) != Self::secret_key(k, &after))
         {
             self.forget_account_secrets(&before);
             self.passwords.remove(&before.id);
@@ -2406,7 +2406,8 @@ impl MailApp {
     pub(crate) fn forget_account_secrets(&mut self, a: &mailcraft_model::Account) {
         let Some(store) = &self.services.secrets else { return };
         let mut gone = Vec::new();
-        for kind in ["password", "refresh", "dav"] {
+        // (And the Nextcloud password of an account that names a Nextcloud server: VIP.)
+        for kind in ["password", "refresh", "dav"].into_iter().filter(|kind| *kind != "dav" || a.dav.is_some()) {
             for key in [Self::secret_key(kind, a), Self::legacy_secret_key(kind, &a.email)] {
                 store.delete(&key);
                 if store.get(&key).is_none() {

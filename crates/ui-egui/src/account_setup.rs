@@ -2532,7 +2532,8 @@ mod tests {
     fn gmail_signs_in_on_googles_page_when_there_is_a_google_application_id() {
         let mut a = app(false);
         a.services.google_client_id = "g-client.apps.googleusercontent.example".into();
-        let signed = sign_ins(&mut a, Some(Ok(signed_in("Noor Haddad"))));
+        // (Google says the same address back: the account is the one that signed in.)
+        let signed = sign_ins(&mut a, Some(Ok(SignedIn { email: "noor@gmail.com".into(), ..signed_in("Noor Haddad") })));
         let _synced = syncs(&mut a);
         let mut h = open(a, json!({}));
         connect(&mut h, "noor@gmail.com");

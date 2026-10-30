@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(r#"{"name": string, "subject"?: string, "body"?: string} (default: the subject and text of the message being written); a template of that name is replaced"#),
         CommandSpec::new("template.remove", "Delete Template", "Insert › Text", template_remove).params(r#"{"name": string}"#),
         CommandSpec::new("template.list", "Templates", "Insert › Text", template_list).pure(),
-        CommandSpec::new("insert.quickParts", "Quick Parts", "Insert › Text", insert_template)
+        CommandSpec::new("insert.quickParts", "Saved Text", "Insert › Text", insert_template)
             .pure()
             .params(r#"{"name": string} — the template's text at the cursor, and its subject when there is none yet"#)
             .when(needs_compose),

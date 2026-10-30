@@ -108,6 +108,15 @@ impl Access {
 }
 
 const SAFE: &[&str] = &[
+    // VIP Mail: what is looked at, snoozed or set on the message being written.
+    "vip.list",
+    "followup.list",
+    "template.list",
+    "insert.quickParts",
+    "mail.snooze",
+    "mail.unsnooze",
+    "compose.delay",
+    "compose.followUp",
     // A result the servers found for the owner's search, opened (and so fetched) as any message.
     "search.openServerResult",
     // File: content goes in and out as `data`; a path is refused separately.
@@ -340,6 +349,9 @@ const SAFE: &[&str] = &[
 
 const SEND: &[&str] = &[
     "compose.send",
+    // VIP Mail: an unsubscribe writes to, or opens a page of, the sender.
+    "mail.unsubscribe",
+    "ui.unsubscribe",
     "mail.sendAgain",
     "calendar.propose",
     "calendar.forward",
@@ -401,6 +413,9 @@ const ACCOUNTS: &[&str] = &[
     "ui.switchToGraph",
     // The owner's yes to the servers of a mailbox opened from a file.
     "ui.confirmServers",
+    // VIP Mail: answers sent for the owner while away, and the Nextcloud server and its password.
+    "account.automaticReplies",
+    "account.nextcloud",
 ];
 
 const MAILBOX: &[&str] = &["file.new", "file.open", "file.save", "file.saveAs"];
@@ -445,6 +460,11 @@ const SETTINGS: &[&str] = &[
     "ui.updateInstall",
     "ui.dismissUpdateNotice",
     "ui.dismissSettingsNotice",
+    // VIP Mail: who is a VIP, and the owner's saved texts.
+    "vip.add",
+    "vip.remove",
+    "template.save",
+    "template.remove",
 ];
 
 const NEVER: &[&str] = &[
