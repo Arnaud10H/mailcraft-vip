@@ -33,7 +33,7 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 | Recherche Meilisearch | Remplacée par la recherche locale de MailCraft : hors ligne, sur toutes les boîtes, avec opérateurs. L'index de VIP Mail ne contenait que 79 mails, jamais nettoyés. |
 | Tri par IA, résumé, réponses suggérées | Pas dans l'app. Claude Code passe par le serveur MCP `mailcraft` (`mailcraft-cli mcp --connect 127.0.0.1:7991`, déjà enregistré). |
 | CalDAV / CardDAV (Nextcloud) | Porté, **en lecture** : l'agenda « Nextcloud » est en lecture seule ici, et les contacts ne se modifient pas. Pour créer ou modifier, passer par Nextcloud. |
-| Actions Dolibarr / Bench depuis un mail (devis, tiers, tâche) | Compétence Claude Code `mailcraft-dolibarr` (`~/NextCloud/Claude/skills/`) : elle lit le mail par le MCP et appelle l'API. Le rattachement d'un mail à un projet n'a jamais servi et n'est pas repris. |
+| Actions Dolibarr / Bench depuis un mail (devis, tiers, tâche) | Compétence Claude Code `mailcraft-dolibarr` (`~/Nextcloud/Claude/skills/`) : elle lit le mail par le MCP et appelle l'API. Le rattachement d'un mail à un projet n'a jamais servi et n'est pas repris. |
 | Multi-utilisateur, PWA, Electron, APK | Hors sujet pour une app de bureau. |
 
 ## Installation sur un poste vierge
@@ -73,7 +73,7 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 ## Reprendre les données de VIP Mail
 
 ```sh
-python3 -I ~/NextCloud/Claude/migration/vipmail/import-vipmail.py
+python3 -I ~/Nextcloud/Claude/migration/vipmail/import-vipmail.py
 ```
 
 - Fermer MailCraft avant de lancer l'import.
@@ -85,7 +85,7 @@ python3 -I ~/NextCloud/Claude/migration/vipmail/import-vipmail.py
   - la signature (texte seul) ;
   - le texte de la réponse automatique.
 - Les expéditeurs VIP se listent dans `vip-senders.txt`, à côté du script.
-- Il n'importe pas le mot de passe. Au premier Envoyer/Recevoir, MailCraft le demande une fois et le garde dans le trousseau du système. Le mot de passe se trouve dans `~/NextCloud/Claude/password/credentials.md`.
+- Il n'importe pas le mot de passe. Au premier Envoyer/Recevoir, MailCraft le demande une fois et le garde dans le trousseau du système. Le mot de passe se trouve dans `~/Nextcloud/Claude/password/credentials.md`.
 - `--dry-run` affiche ce qui serait importé, sans rien écrire.
 
 ## Nextcloud
@@ -125,7 +125,7 @@ Commande d'arrêt :
 ssh arnaud@bernard 'cd ~/Code/vipmail && docker compose stop'
 ```
 
-Les données restent dans les volumes Docker et dans les dumps de `~/NextCloud/Claude/migration/vipmail/`.
+Les données restent dans les volumes Docker et dans les dumps de `~/Nextcloud/Claude/migration/vipmail/`.
 
 ## Développement
 
