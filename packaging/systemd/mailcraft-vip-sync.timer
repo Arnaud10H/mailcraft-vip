@@ -1,0 +1,10 @@
+[Unit]
+Description=MailCraft VIP — synchro upstream chaque nuit
+
+[Timer]
+OnCalendar=*-*-* 04:47:00
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

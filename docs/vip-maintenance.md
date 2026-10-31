@@ -85,3 +85,14 @@ nouveaux champs de structs upstream à compléter dans les initialisations de te
 
 - Edouard (Mac) : brief `~/Nextcloud/Claude/migration/BRIEF-Edouard-MailCraft-vip-ucs-20261030.md`.
 - update-arch (JeanClaude) : met MailCraft à jour **avant** les paquets système, depuis la branche courante.
+
+## Automatisation
+
+- **Minuteur systemd (JeanClaude)** : `packaging/systemd/mailcraft-vip-sync.{service,timer}` lancent
+  `packaging/mc-sync-run.sh` chaque nuit à 04:47 : synchro, rapport `system-reports/mailcraft-sync-AAAAMMJJ.md`,
+  notification. Les jours sans conflit tout est automatique ; un conflit (code 2) ou un contrôle en échec
+  (code 3) attend la discussion MailCraft. Activation (une fois, par Arnaud) :
+  `cp ~/Code/mailcraft-vip/packaging/systemd/mailcraft-vip-sync.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now mailcraft-vip-sync.timer`
+- **Tâche planifiée Cowork (optionnelle)** : la même synchro menée par Claude, qui résout aussi les
+  conflits. Prompt prêt : `~/Nextcloud/Claude/projets/mailcraft/TACHE-PLANIFIEE-synchro.md` (elle a besoin du
+  dossier `Claude/password` pour la clé SSH : à créer et approuver par Arnaud).

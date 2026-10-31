@@ -1,0 +1,11 @@
+[Unit]
+Description=MailCraft VIP — synchro avec UCS-Care-Group/mailcraft (merge, tests, installation)
+After=network-online.target
+
+[Service]
+Type=oneshot
+LimitNOFILE=65536
+Nice=10
+WorkingDirectory=%h/Code/mailcraft-vip
+ExecStart=/usr/bin/bash %h/Code/mailcraft-vip/packaging/mc-sync-run.sh
+TimeoutStartSec=2h
