@@ -583,7 +583,7 @@ msgstr "Ajouter une boîte aux lettres partagée…"
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Add VIP"
-msgstr ""
+msgstr "Ajouter aux VIP"
 
 #. interface
 #: crates/ui-egui/src/chrome.rs
@@ -876,7 +876,7 @@ msgstr "Un agent veut {what}."
 #. interface
 #: crates/ui-egui/src/forms/nextcloud.rs
 msgid "An app password (Settings › Security)"
-msgstr ""
+msgstr "Un mot de passe d'application (Paramètres › Sécurité)"
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -936,7 +936,7 @@ msgstr "Un autre horaire a été proposé à {name}"
 #. interface
 #: crates/ui-egui/src/backstage.rs
 msgid "Answer new mail while you're away"
-msgstr ""
+msgstr "Répondre aux nouveaux messages pendant votre absence"
 
 #. interface
 #: crates/ui-egui/src/reading/invitation.rs
@@ -1327,7 +1327,7 @@ msgstr "Automatique"
 #. command label, interface
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/forms.rs
 msgid "Automatic Replies"
-msgstr ""
+msgstr "Réponses automatiques"
 
 #. interface
 #: crates/ui-egui/src/dialogs.rs
@@ -1337,7 +1337,7 @@ msgstr ""
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Awaiting Reply"
-msgstr ""
+msgstr "En attente de réponse"
 
 #. command label, interface, ribbon
 #: crates/engine/src/cmd/view.rs crates/ui-egui/src/account_setup.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/ribbon.rs
@@ -2131,7 +2131,7 @@ msgstr "Contact"
 #. interface
 #: crates/ui-egui/src/forms/nextcloud.rs
 msgid "Contacts"
-msgstr ""
+msgstr "Contacts"
 
 #. interface
 #: crates/ui-egui/src/dialogs.rs
@@ -2452,17 +2452,17 @@ msgstr "Par défaut"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Delay"
-msgstr ""
+msgstr "Différer"
 
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Delay Delivery"
-msgstr ""
+msgstr "Différer la remise"
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Delay delivery"
-msgstr ""
+msgstr "Différer la remise"
 
 #. command label, interface, name, ribbon, ribbon location
 #: crates/engine/src/cmd/calendar.rs crates/engine/src/cmd/junk.rs crates/engine/src/cmd/mail.rs crates/engine/src/cmd/people.rs crates/engine/src/cmd/tasks.rs crates/engine/src/cmd/vip.rs crates/ui-egui/src/agent_gate.rs crates/ui-egui/src/calendar_view.rs crates/ui-egui/src/dialogs.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/mail_view.rs crates/ui-egui/src/people_view.rs crates/ui-egui/src/ribbon.rs crates/ui-egui/src/signatures.rs crates/ui-egui/src/tasks_view.rs
@@ -2543,7 +2543,7 @@ msgstr "Supprimer la signature"
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Delete Template"
-msgstr ""
+msgstr "Supprimer le modèle"
 
 #. command label
 #: crates/engine/src/cmd/format.rs
@@ -2984,7 +2984,7 @@ msgstr "E-mail"
 #. interface
 #: crates/ui-egui/src/forms/auto_reply.rs
 msgid "Each sender is answered once; mailing lists and automatic mail never are."
-msgstr ""
+msgstr "Chaque expéditeur ne reçoit qu'une réponse ; jamais les listes de diffusion ni les messages automatiques."
 
 #. interface, name
 #: crates/ui-egui/src/menubar.rs crates/ui-egui/src/people_view.rs crates/ui-egui/src/tasks_view.rs
@@ -3573,12 +3573,12 @@ msgstr "Suivi"
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Follow Up If No Reply"
-msgstr ""
+msgstr "Relancer sans réponse"
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Follow up if there is no reply"
-msgstr ""
+msgstr "Relancer s'il n'y a pas de réponse"
 
 #. interface
 #: crates/ui-egui/src/reading.rs
@@ -3891,7 +3891,7 @@ msgstr "Google"
 #. interface
 #: crates/ui-egui/src/account_setup.rs
 msgid "Google accounts sign in on Google's own page; no password is typed here."
-msgstr ""
+msgstr "Les comptes Google se connectent sur la page de Google : aucun mot de passe n'est saisi ici."
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -4227,12 +4227,12 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "In 1 Hour"
-msgstr ""
+msgstr "Dans 1 heure"
 
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "In 3 Hours"
-msgstr ""
+msgstr "Dans 3 heures"
 
 #. interface
 #: crates/ui-egui/src/signatures.rs
@@ -4329,7 +4329,7 @@ msgstr ""
 #. ribbon location
 #: crates/engine/src/cmd/picture.rs crates/engine/src/cmd/vip.rs crates/engine/src/cmd/writing_tools.rs
 msgid "Insert"
-msgstr ""
+msgstr "Insertion"
 
 #. interface
 #: crates/ui-egui/src/dialogs.rs
@@ -4346,7 +4346,7 @@ msgstr "Insérer une image"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Insert a template"
-msgstr ""
+msgstr "Insérer un modèle"
 
 #. command label
 #: crates/engine/src/cmd/view.rs
@@ -4761,7 +4761,7 @@ msgstr "Exclure ce compte de cet Envoyer/Recevoir"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Leave this mailing list"
-msgstr ""
+msgstr "Quitter cette liste de diffusion"
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -5269,7 +5269,7 @@ msgstr "Marquer comme non lu"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Mark the sender VIP"
-msgstr ""
+msgstr "Marquer l'expéditeur comme VIP"
 
 #. date and time
 #: crates/i18n/src/date.rs
@@ -5513,7 +5513,7 @@ msgstr "Mois"
 #. ribbon location
 #: crates/engine/src/cmd/vip.rs
 msgid "More Options"
-msgstr ""
+msgstr "Plus d'options"
 
 #. command label
 #: crates/engine/src/cmd/search_server.rs crates/ui-egui/src/lib.rs
@@ -5967,7 +5967,7 @@ msgstr "La semaine prochaine"
 #. command label, interface
 #: crates/engine/src/cmd/dav.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/forms.rs
 msgid "Nextcloud Calendar and Contacts"
-msgstr ""
+msgstr "Agenda et contacts Nextcloud"
 
 #. interface
 #: crates/ui-egui/src/merge_contacts.rs
@@ -5989,7 +5989,7 @@ msgstr "Sans date"
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "No Follow Up"
-msgstr ""
+msgstr "Pas de relance"
 
 #. interface
 #: crates/ui-egui/src/graph_switch.rs
@@ -6194,7 +6194,7 @@ msgstr "Ce compte n'existe pas"
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "No templates yet"
-msgstr ""
+msgstr "Aucun modèle pour l'instant"
 
 #. interface
 #: crates/ui-egui/src/credits.rs
@@ -6511,7 +6511,7 @@ msgstr "Uniquement sur cet appareil : aucun serveur de messagerie"
 #. interface
 #: crates/ui-egui/src/backstage.rs
 msgid "On: senders get your automatic reply"
-msgstr ""
+msgstr "Activées : les expéditeurs reçoivent votre réponse automatique"
 
 #. interface
 #: crates/ui-egui/src/updates.rs
@@ -7361,7 +7361,7 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/backstage.rs
 msgid "Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)"
-msgstr ""
+msgstr "Lire ici votre agenda et vos contacts Nextcloud (CalDAV/CardDAV)"
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
@@ -7584,7 +7584,7 @@ msgstr "Supprimer la boîte aux lettres partagée"
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "Remove VIP"
-msgstr ""
+msgstr "Retirer des VIP"
 
 #. interface
 #: crates/ui-egui/src/forms.rs
@@ -8034,7 +8034,7 @@ msgstr "Enregistrer la signature"
 #. command label, interface
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/ribbon.rs
 msgid "Save as Template"
-msgstr ""
+msgstr "Enregistrer comme modèle"
 
 #. interface
 #: crates/ui-egui/src/calendar_view.rs
@@ -8057,7 +8057,7 @@ msgstr "Exporter des données"
 #. command label, ribbon
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/ribbon.rs
 msgid "Saved Text"
-msgstr ""
+msgstr "Textes enregistrés"
 
 #. interface
 #: crates/ui-egui/src/calendar_sync.rs
@@ -8371,7 +8371,7 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Send Right Away"
-msgstr ""
+msgstr "Envoyer tout de suite"
 
 #. interface
 #: crates/ui-egui/src/task_sync.rs
@@ -8410,7 +8410,7 @@ msgstr "Envoyer et recevoir automatiquement"
 #. interface
 #: crates/ui-egui/src/forms/auto_reply.rs
 msgid "Send automatic replies"
-msgstr ""
+msgstr "Envoyer des réponses automatiques"
 
 #. interface
 #: crates/ui-egui/src/report_problem.rs
@@ -8769,7 +8769,7 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Show Snoozed"
-msgstr ""
+msgstr "Afficher les messages reportés"
 
 #. interface
 #: crates/ui-egui/src/shared_calendars.rs
@@ -9175,7 +9175,7 @@ msgstr "Reporter les rappels"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "Snooze until later"
-msgstr ""
+msgstr "Reporter à plus tard"
 
 #. interface
 #: crates/ui-egui/src/reading.rs
@@ -9550,12 +9550,12 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Template"
-msgstr ""
+msgstr "Modèle"
 
 #. command label, ribbon
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/ribbon.rs
 msgid "Templates"
-msgstr ""
+msgstr "Modèles"
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -9784,7 +9784,7 @@ msgstr ""
 #. interface
 #: crates/ui-egui/src/forms/nextcloud.rs
 msgid "The calendar and the contacts come down with each Send/Receive, for reading. Leave the address empty to stop."
-msgstr ""
+msgstr "L'agenda et les contacts sont téléchargés à chaque Envoyer/Recevoir, en lecture seule. Laissez l'adresse vide pour arrêter."
 
 #. interface
 #: crates/ui-egui/src/calendar_sync.rs
@@ -11199,17 +11199,17 @@ msgstr "Demain"
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Tomorrow Morning"
-msgstr ""
+msgstr "Demain matin"
 
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Tomorrow at 14:00"
-msgstr ""
+msgstr "Demain à 14:00"
 
 #. interface
 #: crates/ui-egui/src/ribbon.rs
 msgid "Tomorrow at 8:00"
-msgstr ""
+msgstr "Demain à 8:00"
 
 #. what a command says
 #: crates/engine/src/cmd/remote.rs
@@ -11414,17 +11414,17 @@ msgstr "Message non enregistré"
 #. command label, interface
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/ribbon.rs
 msgid "Unsnooze"
-msgstr ""
+msgstr "Ne plus reporter"
 
 #. command label, ribbon
 #: crates/engine/src/cmd/vip.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/ribbon.rs
 msgid "Unsubscribe"
-msgstr ""
+msgstr "Se désabonner"
 
 #. interface
 #: crates/ui-egui/src/forms/auto_reply.rs
 msgid "Until"
-msgstr ""
+msgstr "Jusqu'au"
 
 #. interface
 #: crates/ui-egui/src/backstage.rs
@@ -11531,12 +11531,12 @@ msgstr "Généralement l'adresse complète"
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
 msgid "VIP"
-msgstr ""
+msgstr "VIP"
 
 #. command label
 #: crates/engine/src/cmd/vip.rs
 msgid "VIP Senders"
-msgstr ""
+msgstr "Expéditeurs VIP"
 
 #. name
 #: crates/model/src/rich.rs
@@ -13090,7 +13090,7 @@ msgstr "le compte n'existe plus"
 #. what a command says
 #: crates/engine/src/cmd/dav.rs
 msgid "the address must start with https://"
-msgstr ""
+msgstr "l'adresse doit commencer par https://"
 
 #. what a command says
 #: crates/engine/src/cmd/graph_switch.rs
@@ -13348,7 +13348,7 @@ msgstr "il n'y a aucun contact à exporter"
 #. what a command says
 #: crates/engine/src/cmd/vip.rs
 msgid "there are too many VIP senders"
-msgstr ""
+msgstr "il y a trop d'expéditeurs VIP"
 
 #. what a command says
 #: crates/engine/src/cmd/account.rs crates/engine/src/cmd/shared.rs
@@ -13383,7 +13383,7 @@ msgstr "il y a trop de signatures"
 #. what a command says
 #: crates/engine/src/cmd/vip.rs
 msgid "there are too many templates"
-msgstr ""
+msgstr "il y a trop de modèles"
 
 #. what a command says
 #: crates/engine/src/cmd/signature.rs
@@ -13512,7 +13512,7 @@ msgstr "ce message contient déjà le nombre maximal de pièces jointes"
 #. what a command says
 #: crates/engine/src/cmd/vip.rs
 msgid "this message doesn't say how to leave its list"
-msgstr ""
+msgstr "ce message n'indique pas comment quitter sa liste"
 
 #. what a command says
 #: crates/model/src/pictures.rs
