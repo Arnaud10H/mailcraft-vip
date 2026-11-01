@@ -13,6 +13,7 @@ pub mod auth_results;
 mod calendar;
 pub mod confusables;
 mod contact;
+mod dav_server;
 mod ews_server;
 mod jmap_server;
 mod junk;
@@ -45,6 +46,7 @@ pub use calendar::{
     OpenedCalendar, Proposal, Recurrence, Response, ResponseOptions, Rights, ShowAs,
 };
 pub use contact::{Contact, Labeled, PostalAddress};
+pub use dav_server::DavServer;
 pub use ews_server::EwsServer;
 pub use jmap_server::JmapServer;
 pub use junk::{Added, JunkList, JunkLists, MAX_JUNK_ENTRIES, junk_entry, junk_key};

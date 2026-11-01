@@ -15,7 +15,8 @@ pub mod category;
 pub mod compose;
 #[cfg(test)]
 mod compose_trust_tests;
-pub mod dav;
+#[cfg(test)]
+mod dav_account_tests;
 pub mod edit;
 pub mod ews_mail;
 #[cfg(test)]
@@ -150,7 +151,6 @@ pub fn registry() -> Registry {
     v.extend(sync_progress::specs());
     v.extend(search_server::specs());
     v.extend(vip::specs());
-    v.extend(dav::specs());
     Registry::new(v)
 }
 

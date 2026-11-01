@@ -13,8 +13,8 @@ use mailcraft_model::sync::{
     SyncRequest, SyncResult, SyncStage, own_labels, summary_line_in,
 };
 use mailcraft_model::{
-    Account, AccountKind, Directory, EwsServer, FlagStatus, Folder, FolderKind, Id, JmapServer, MailIdentity, Mailbox, Message, OAuth, OAuthProvider,
-    Pending, Queued, Security, Server, clean_name,
+    Account, AccountKind, DavServer, Directory, EwsServer, FlagStatus, Folder, FolderKind, Id, JmapServer, MailIdentity, Mailbox, Message, OAuth,
+    OAuthProvider, Pending, Queued, Security, Server, clean_name,
 };
 use serde_json::{Value, json};
 
@@ -40,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-const ACCOUNT: &str = r#"{"email": string, "displayName"?: string, "name"?: string, "username"?: string, "incoming"?: {"host": string, "port"?: number, "security"?: "tls"|"starttls"|"none"} | null, "outgoing"?: same | null, "auth"?: "password"|"oauth2" (oauth2: sign in on the provider's page), "provider"?: "microsoft", "clientId"?: string, "tenant"?: string, "directory"?: "organisation"|"personal" (which kind of Microsoft account signs in, when the sign-in said), "kind"?: "imap"|"local"|"microsoft"|"jmap"|"exchange" (microsoft: kept in step through Microsoft Graph, no mail servers; jmap: kept in step over JMAP, no mail servers; exchange: an Exchange server account, kept in step through Exchange Web Services, no mail servers, only while Exchange server accounts are being tested: MAILCRAFT_EWS=1), "ews"?: {"url": string (the https:// address of the server's Exchange Web Services, `…/EWS/Exchange.asmx`), "username"?: string (DOMAIN\user or a UPN; default the e-mail address), "trusted"?: string (the SHA-256 fingerprint of the one certificate trusted for this account besides the system's)} (an Exchange server account's server; the password is never a setting), "jmap"?: {"session": string (the https:// address of the server's JMAP session resource), "bearer"?: bool (the secret is a bearer token, not the account's password)} (a JMAP account's server; the secret is never a setting)}"#;
+const ACCOUNT: &str = r#"{"email": string, "displayName"?: string, "name"?: string, "username"?: string, "incoming"?: {"host": string, "port"?: number, "security"?: "tls"|"starttls"|"none"} | null, "outgoing"?: same | null, "auth"?: "password"|"oauth2" (oauth2: sign in on the provider's page), "provider"?: "microsoft", "clientId"?: string, "tenant"?: string, "directory"?: "organisation"|"personal" (which kind of Microsoft account signs in, when the sign-in said), "kind"?: "imap"|"local"|"microsoft"|"jmap"|"exchange"|"dav" (microsoft: kept in step through Microsoft Graph, no mail servers; jmap: kept in step over JMAP, no mail servers; dav: calendars and contacts on a CalDAV/CardDAV server (Nextcloud and the like), no mail at all; exchange: an Exchange server account, kept in step through Exchange Web Services, no mail servers, only while Exchange server accounts are being tested: MAILCRAFT_EWS=1), "ews"?: {"url": string (the https:// address of the server's Exchange Web Services, `…/EWS/Exchange.asmx`), "username"?: string (DOMAIN\user or a UPN; default the e-mail address), "trusted"?: string (the SHA-256 fingerprint of the one certificate trusted for this account besides the system's)} (an Exchange server account's server; the password is never a setting), "jmap"?: {"session": string (the https:// address of the server's JMAP session resource), "bearer"?: bool (the secret is a bearer token, not the account's password)} (a JMAP account's server; the secret is never a setting), "dav"?: {"url": string (the https:// address of the server, or of anything on it that leads to the owner's principal: `https://cloud.example.org`, `…/remote.php/dav`), "username"?: string (default the e-mail address)} (a calendar and contacts server; its calendars and address books are found from the address each time it is asked, and the password, usually an app password, is never a setting)}"#;
 
 fn has_server(s: &Session) -> Option<&'static str> {
     if s.mailbox.accounts.iter().any(|a| a.kind.has_server()) {
@@ -225,14 +225,15 @@ fn apply_fields(a: &mut Account, v: &Value) -> Result<(), CmdError> {
         Some(k) if k == "microsoft" || k == "graph" => AccountKind::Microsoft,
         Some(k) if k == "jmap" => AccountKind::Jmap,
         Some(k) if k == "exchange" => AccountKind::Exchange,
+        Some(k) if k == "dav" || k == "caldav" || k == "nextcloud" => AccountKind::Dav,
         Some(k) if k == "imap" || k == "local" => AccountKind::Imap,
-        Some(_) => return Err(bad("`kind` is imap, local, microsoft, jmap or exchange")),
+        Some(_) => return Err(bad("`kind` is imap, local, microsoft, jmap, exchange or dav")),
     };
     match kind {
         AccountKind::Microsoft => {
             // Graph and nothing else: no mail servers, and a sign-in with Microsoft.
             a.kind = AccountKind::Microsoft;
-            (a.incoming, a.outgoing, a.jmap, a.ews) = (None, None, None, None);
+            (a.incoming, a.outgoing, a.jmap, a.ews, a.dav) = (None, None, None, None, None);
             let o = a.oauth.get_or_insert_with(OAuth::default);
             o.provider = OAuthProvider::Microsoft;
         }
@@ -241,7 +242,7 @@ fn apply_fields(a: &mut Account, v: &Value) -> Result<(), CmdError> {
             // server's session resource is (RFC 8620 §2) and how the secret goes.
             a.jmap = Some(jmap_server(v, a.jmap.as_ref())?);
             a.kind = AccountKind::Jmap;
-            (a.incoming, a.outgoing, a.oauth, a.ews) = (None, None, None, None);
+            (a.incoming, a.outgoing, a.oauth, a.ews, a.dav) = (None, None, None, None, None);
         }
         AccountKind::Exchange => {
             // Exchange Web Services and nothing else (#252): no mail servers and no sign-in with
@@ -249,11 +250,18 @@ fn apply_fields(a: &mut Account, v: &Value) -> Result<(), CmdError> {
             // server's services are and who signs in.
             a.ews = Some(ews_server(v, a.ews.as_ref())?);
             a.kind = AccountKind::Exchange;
-            (a.incoming, a.outgoing, a.oauth, a.jmap) = (None, None, None, None);
+            (a.incoming, a.outgoing, a.oauth, a.jmap, a.dav) = (None, None, None, None, None);
+        }
+        AccountKind::Dav => {
+            // A calendar and contacts server and nothing else: no mail servers and no sign-in
+            // with a provider, but where the server is and who signs in.
+            a.dav = Some(dav_server(v, a.dav.as_ref())?);
+            a.kind = AccountKind::Dav;
+            (a.incoming, a.outgoing, a.oauth, a.jmap, a.ews) = (None, None, None, None, None);
         }
         _ => {
             a.kind = if a.incoming.is_some() || a.outgoing.is_some() { AccountKind::Imap } else { AccountKind::Local };
-            (a.jmap, a.ews) = (None, None);
+            (a.jmap, a.ews, a.dav) = (None, None, None);
         }
     }
     if a.name.is_empty() {
@@ -326,6 +334,34 @@ fn ews_server(v: &Value, before: Option<&EwsServer>) -> Result<EwsServer, CmdErr
             "trusted"
         };
         return Err(bad(format!("`ews.{word}` {why}")));
+    }
+    Ok(server)
+}
+
+/// A calendar and contacts server from `dav` in a command's params, over `before` (what it has,
+/// when it has a server): `url`, the server's address, and `username`. What is given, or what a
+/// new server has, must be what the model takes ([`DavServer::problem`]); nothing is sent to it.
+fn dav_server(v: &Value, before: Option<&DavServer>) -> Result<DavServer, CmdError> {
+    let mut server = before.cloned().unwrap_or_default();
+    let mut given = false;
+    match v.get("dav") {
+        None => {}
+        Some(settings @ Value::Object(_)) => {
+            for (key, field) in [("url", &mut server.url), ("username", &mut server.username)] {
+                match settings.get(key) {
+                    None => {}
+                    Some(Value::String(text)) => (*field, given) = (text.trim().to_string(), true),
+                    Some(_) => return Err(bad(format!("`dav.{key}` is a string"))),
+                }
+            }
+        }
+        Some(_) => return Err(bad("`dav` is {\"url\": string, \"username\"?: string}")),
+    }
+    if (given || before.is_none())
+        && let Some(why) = server.problem()
+    {
+        let word = if DavServer::check_url(&server.url).is_err() { "url" } else { "username" };
+        return Err(bad(format!("`dav.{word}` {why}")));
     }
     Ok(server)
 }
@@ -406,6 +442,12 @@ fn ews_shown(a: &Account) -> Option<Value> {
     a.ews.as_ref().map(|server| {
         json!({"server": server.problem().is_none().then(|| jmap_origin(&server.url)), "username": server.username, "trustsCertificate": !server.trusted.is_empty()})
     })
+}
+
+/// What `account.list` says of a calendar and contacts server: where it connects and the name it
+/// signs in with, not the rest of the address.
+fn dav_shown(a: &Account) -> Option<Value> {
+    a.dav.as_ref().map(|server| json!({"server": server.host(), "username": server.username}))
 }
 
 fn add(s: &mut Session, v: &Value) -> CmdResult {
@@ -627,7 +669,7 @@ fn list(s: &mut Session, _: &Value) -> CmdResult {
         .accounts
         .iter()
         .map(|a| {
-            json!({"id": a.id, "name": a.name, "email": a.email, "displayName": a.display_name, "kind": a.kind, "username": a.username, "incoming": a.incoming, "outgoing": a.outgoing, "signature": a.signature, "replySignature": a.reply_signature(), "auth": if a.oauth.is_some() { "oauth2" } else { "password" }, "oauth": a.oauth, "downloadInFull": a.download_in_full, "keepOffline": s.mailbox.keep_offline_of(a.id), "askBeforeDeletingConversation": s.mailbox.asks_before_deleting_conversation(a.id), "sharedOf": a.shared_of, "jmap": jmap_shown(a), "ews": ews_shown(a)})
+            json!({"id": a.id, "name": a.name, "email": a.email, "displayName": a.display_name, "kind": a.kind, "username": a.username, "incoming": a.incoming, "outgoing": a.outgoing, "signature": a.signature, "replySignature": a.reply_signature(), "auth": if a.oauth.is_some() { "oauth2" } else { "password" }, "oauth": a.oauth, "downloadInFull": a.download_in_full, "keepOffline": s.mailbox.keep_offline_of(a.id), "askBeforeDeletingConversation": s.mailbox.asks_before_deleting_conversation(a.id), "sharedOf": a.shared_of, "jmap": jmap_shown(a), "ews": ews_shown(a), "dav": dav_shown(a)})
         })
         .collect();
     Ok(json!({"accounts": accounts, "signatures": s.mailbox.signatures}))
@@ -971,6 +1013,10 @@ fn request(s: &mut Session, v: &Value) -> CmdResult {
     if s.mailbox.account(account).is_some_and(|a| a.kind == AccountKind::Exchange) {
         return Err(fail(super::ews_mail::refusal_text(s)));
     }
+    // A calendar and contacts server has no mail: the calendar's own job keeps it in step.
+    if s.mailbox.account(account).is_some_and(|a| a.kind == AccountKind::Dav) {
+        return Err(fail("this account has no mail: its calendars and contacts are kept in step by the calendar's own job"));
+    }
     let req = sync_request(s, account)?;
     serde_json::to_value(&req).map_err(|e| fail(e.to_string()))
 }
@@ -1089,11 +1135,6 @@ pub fn apply_sync_part(s: &mut Session, run: &mut SyncTotals, mut result: SyncRe
     let (partial, stopped) = (result.partial, result.stopped);
     let pushed = result.pushed_count();
     let (counts, sent) = if result.has_news() { take_in_news(s, account, &mut result) } else { (Counts::default(), 0) };
-    if let Some(dav) = result.dav.take()
-        && let Err(e) = super::dav::take_in(s, account, &dav)
-    {
-        result.errors.push(format!("Nextcloud: {e}"));
-    }
     // Looking at a folder says which of how many it is.
     let folders = result.step.as_ref().filter(|step| step.stage == SyncStage::Checking).map(|step| (step.done, step.total));
     let piece = Piece {

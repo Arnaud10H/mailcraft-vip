@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::sync::RemoteFlags;
 use crate::{
-    Action, Answers, Calendar, Contact, Event, EwsServer, Id, JmapServer, KeepOffline, Message, ModelError, Rgb, Rule, Signature, Task, clean_name,
+    Action, Answers, Calendar, Contact, DavServer, Event, EwsServer, Id, JmapServer, KeepOffline, Message, ModelError, Rgb, Rule, Signature, Task,
+    clean_name,
 };
 
 /// Deepest a folder tree may nest (a hostile file could otherwise chain folders without end).
@@ -261,6 +262,14 @@ pub enum AccountKind {
     /// ([`AccountKind::needs_switch`]): switched off, an account of this kind in a mailbox opens
     /// and shows its mail, but is not kept in step.
     Exchange,
+    /// Calendars and contacts on a server that speaks CalDAV and CardDAV (Nextcloud, ownCloud,
+    /// Radicale, Baïkal, a Synology…), kept in step over HTTPS, with no mail: it has no mail
+    /// servers, no folders that fill, no Outbox that empties. Its server is [`Account::dav`];
+    /// the password (an app password, with most servers) is given by whoever holds the
+    /// connection and is never written anywhere. Its calendars and address books are found on
+    /// the server each time it is asked, and come down as the account's calendars
+    /// ([`crate::remote::CalendarsDownload`]) and contacts.
+    Dav,
     /// A kind this version doesn't know: an account that a newer MailCraft added, in a file that
     /// one wrote (or one whose kind can't be read at all). Only what says which account it is
     /// is read of it; the whole of it is kept as the file had it and written back so
@@ -271,11 +280,18 @@ pub enum AccountKind {
 }
 
 impl AccountKind {
-    /// Whether the account is kept in step with a server (by IMAP, by Microsoft Graph or by JMAP).
-    /// Not an account of a kind this version doesn't know: whatever server it has, this version
+    /// Whether the account's mail is kept in step with a server (by IMAP, by Microsoft Graph or by
+    /// JMAP). Not a calendar and contacts server ([`AccountKind::Dav`]), which has no mail; and
+    /// not an account of a kind this version doesn't know: whatever server it has, this version
     /// can't use it.
     pub fn has_server(self) -> bool {
         matches!(self, AccountKind::Imap | AccountKind::Microsoft | AccountKind::Jmap | AccountKind::Exchange)
+    }
+
+    /// Whether the account's calendars and contacts live on a CalDAV/CardDAV server, and nothing
+    /// else of it does ([`AccountKind::Dav`]).
+    pub fn is_dav(self) -> bool {
+        matches!(self, AccountKind::Dav)
     }
 
     /// Whether a Send/Receive sends the mail that waits in the account's Outbox (through SMTP,
@@ -391,10 +407,11 @@ pub struct Account {
     /// ([`Mailbox::accounts`]). `None` for every other account.
     #[serde(skip)]
     pub as_written: Option<AsWritten>,
-    /// A CalDAV/CardDAV server (Nextcloud) whose calendar and contacts come down with this
-    /// account's Send/Receive, for reading. Its password is in the system keyring only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dav: Option<crate::vip::Dav>,
+    /// For an [`AccountKind::Dav`] account: where its calendar and contacts server is and the
+    /// name it signs in with ([`DavServer`]). Plain settings: the password is never kept here.
+    /// `None` for every other account, and in a file from before there were any.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::sync::lenient")]
+    pub dav: Option<DavServer>,
 }
 
 impl Account {

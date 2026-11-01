@@ -159,6 +159,11 @@ pub(crate) struct Reply {
     pub(crate) body: Vec<u8>,
     /// What its `Retry-After` header says, when it has one.
     pub(crate) retry_after: Option<String>,
+    /// What its `Location` header says, when it has one (where what was asked for is now, or
+    /// what was made), as written.
+    pub(crate) location: Option<String>,
+    /// What its `ETag` header says, when it has one, as written (the quotes and all).
+    pub(crate) etag: Option<String>,
 }
 
 /// `text` as one piece of a URL or a form: everything but letters, digits and `-._~` as `%XX`.
@@ -610,6 +615,7 @@ struct Head {
     chunked: bool,
     retry_after: Option<String>,
     location: Option<String>,
+    etag: Option<String>,
     content_range: Option<String>,
     /// The server closes the connection after this answer: it said so, it speaks HTTP/1.0, or
     /// the way the body ends is not one that leaves the connection fit for more (a coding
@@ -660,7 +666,7 @@ pub(crate) fn read_reply_kept<R: Read>(stream: &mut R, started: Instant, patienc
         (reader.rest(max_body)?, false)
     };
     let reusable = delimited && !head.close && !reader.ended && reader.pending().is_empty();
-    Ok((Reply { status: head.status, body, retry_after: head.retry_after }, reusable))
+    Ok((Reply { status: head.status, body, retry_after: head.retry_after, location: head.location, etag: head.etag }, reusable))
 }
 
 fn read_head<R: Read>(reader: &mut Reader<'_, R>) -> Result<Head, NetError> {
@@ -703,6 +709,8 @@ fn read_head<R: Read>(reader: &mut Reader<'_, R>) -> Result<Head, NetError> {
             head.location = Some(value.to_string());
         } else if name.eq_ignore_ascii_case("content-range") {
             head.content_range = Some(value.to_string());
+        } else if name.eq_ignore_ascii_case("etag") {
+            head.etag = Some(tidy(value));
         }
         // A length beside chunks: the chunks are read, and the connection is not trusted after.
         head.close |= head.chunked && head.length.is_some();
@@ -1042,7 +1050,10 @@ mod tests {
             let answer = format!("HTTP/1.1 429 Too Many Requests\r\n{headers}Content-Length: 2\r\n\r\n{{}}");
             read_reply(&mut answer.as_bytes(), Instant::now(), SOON, MAX_BODY).unwrap()
         };
-        assert_eq!(reply("Retry-After: 30\r\n"), Reply { status: 429, body: b"{}".to_vec(), retry_after: Some("30".into()) });
+        assert_eq!(
+            reply("Retry-After: 30\r\n"),
+            Reply { status: 429, body: b"{}".to_vec(), retry_after: Some("30".into()), location: None, etag: None }
+        );
         assert_eq!(reply("retry-after:  Wed, 21 Oct 2026 07:28:00 GMT \r\n").retry_after.as_deref(), Some("Wed, 21 Oct 2026 07:28:00 GMT"));
         assert_eq!(reply("X-Other: 1\r\n").retry_after, None);
         // Cut to size and to one line, like any text from a server.

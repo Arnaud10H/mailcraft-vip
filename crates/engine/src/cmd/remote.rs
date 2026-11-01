@@ -2664,19 +2664,6 @@ fn calendar_for(mailbox: &mut Mailbox, account: Id, remote: &str) -> Result<(Id,
     Ok((id, true))
 }
 
-/// The calendar that follows the server's calendar `remote` of `account`, for reading only,
-/// called `name` when it is made.
-pub(crate) fn read_only_calendar(mailbox: &mut Mailbox, account: Id, remote: &str, name: &str) -> Result<Id, CmdError> {
-    let (id, new) = calendar_for(mailbox, account, remote)?;
-    if let Some(calendar) = mailbox.calendars.iter_mut().find(|calendar| calendar.id == id) {
-        calendar.rights = mailcraft_model::Rights::Read;
-        if new {
-            calendar.name = name.into();
-        }
-    }
-    Ok(id)
-}
-
 /// What the calendar that follows an account's main one is called, and what a calendar of the
 /// mailbox's own is called beside it.
 const SERVER_CALENDAR: &str = "Calendar";

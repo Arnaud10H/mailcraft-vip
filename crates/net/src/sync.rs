@@ -161,12 +161,6 @@ pub(crate) fn sync_as(request: &SyncRequest, limits: Limits, host: Host, cancel:
     if let Some(imap) = &imap {
         run.note(imap);
     }
-    // The calendar and the contacts of the account's CalDAV/CardDAV server, for reading.
-    if let Some(dav) = request.account.dav.as_ref().filter(|_| !request.push_only && !request.dav_password.is_empty() && !run.stopped) {
-        let (download, errors) = crate::dav::download(dav, &request.dav_password, mailcraft_time::now());
-        run.out.dav = Some(download);
-        run.out.errors.extend(errors);
-    }
     run.finish();
     // Said once the answer is handed over: nobody waits for a goodbye.
     if let Some(mut imap) = imap {
@@ -249,7 +243,7 @@ impl Run<'_> {
     fn send(&mut self, mut piece: SyncResult) {
         // Whatever a server wrote back, the password or the token doesn't leave in an error line.
         for line in &mut piece.errors {
-            *line = scrub(&scrub(&scrub(line, &self.request.password), &self.request.access_token), &self.request.dav_password);
+            *line = scrub(&scrub(line, &self.request.password), &self.request.access_token);
         }
         (self.emit)(piece);
         self.handed_over = Instant::now();

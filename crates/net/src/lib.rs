@@ -179,6 +179,11 @@ mod native {
     /// `secret` is the account's password, or the access token of an account that signs in with
     /// OAuth ([`Account::oauth`]).
     pub fn test_account(account: &Account, secret: &str) -> Result<(), NetError> {
+        // A calendar and contacts server: the owner's principal is asked for with the password.
+        if account.kind.is_dav() {
+            let server = account.dav.as_ref().ok_or_else(|| NetError::Config("the account has no calendar and contacts server".into()))?;
+            return crate::dav::check(server, &account.email, secret);
+        }
         if account.incoming.is_none() && account.outgoing.is_none() {
             return Err(NetError::Config("the account has no mail servers to check".into()));
         }

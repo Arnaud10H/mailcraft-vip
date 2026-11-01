@@ -2476,6 +2476,12 @@ fn hostile_params_never_panic() {
     junk.push(json!({"result": {"account": ews, "email": "other@example.org"}}));
     junk.push(json!({"account": ews, "message": 18446744073709551615u64, "most": 1e300, "light": "yes", "kind": "exchange", "ews": {"url": 5, "username": [], "trusted": "zz"}}));
     junk.push(json!({"id": ews, "ews": {"url": "http://evil.example/", "trusted": "x".repeat(200)}, "email": "ews@example.org"}));
+    // And a calendar and contacts account, with settings that are none.
+    let dav = json!({"email": "dav@example.org", "kind": "dav", "dav": {"url": "https://cloud.example.org", "username": "dav"}});
+    let dav = s.run("account.add", &dav).unwrap()["id"].as_u64().unwrap();
+    junk.push(json!({"account": dav, "kind": "dav", "dav": {"url": 5, "username": []}, "id": dav}));
+    junk.push(json!({"id": dav, "dav": {"url": "http://evil.example/", "username": "x".repeat(1000)}, "email": "dav@example.org"}));
+    junk.push(json!({"download": {"account": dav, "email": "dav@example.org", "complete": true, "calendars": [{"id": "", "main": true}, {"id": "/x/", "name": "\u{0}", "rights": "nope", "color": "zz"}]}}));
     let ids: Vec<&'static str> = s.registry.all().iter().map(|c| c.id).collect();
     for round in 0..2 {
         for id in &ids {

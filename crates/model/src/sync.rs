@@ -110,9 +110,6 @@ pub struct SyncRequest {
     /// of a password. Never written to disk or logs.
     #[serde(skip)]
     pub access_token: String,
-    /// The password of the account's CalDAV/CardDAV server ([`Account::dav`]). Never written to disk or logs.
-    #[serde(skip)]
-    pub dav_password: String,
     pub folders: Vec<FolderState>,
     /// Messages waiting in the Outbox, to send first.
     pub outbox: Vec<Message>,
@@ -687,9 +684,6 @@ pub struct SyncResult {
     /// How long this piece's part of the run took, and how many requests it made (#276).
     #[serde(skip_serializing_if = "Timings::is_empty")]
     pub timings: Timings,
-    /// The calendar and contacts of the account's CalDAV/CardDAV server (in the last piece).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dav: Option<crate::vip::DavDownload>,
 }
 
 impl SyncResult {
@@ -736,9 +730,6 @@ impl SyncResult {
         self.placed.extend(later.placed);
         self.unplaced.extend(later.unplaced);
         self.errors.extend(later.errors);
-        if later.dav.is_some() {
-            self.dav = later.dav;
-        }
         for delta in later.folders {
             match self.folders.iter_mut().find(|f| f.remote == delta.remote && f.uid_validity == delta.uid_validity) {
                 Some(folder) => {
