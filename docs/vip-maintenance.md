@@ -83,8 +83,15 @@ nouveaux champs de structs upstream à compléter dans les initialisations de te
 
 ## Autres postes
 
+MailCraft VIP sur le parc = une « nightly » : chaque poste redescend `vip-ucs` (la branche intégrée)
+pour voir les évolutions ; pas de synchro de données entre postes (les contacts Nextcloud ne sont plus
+lus depuis le 01/11/2026, seul l'agenda l'est).
+
+- Déploiement et mise à jour communs : canal `~/Nextcloud/Claude/travail-commun/` (tâches
+  `AAAAMMJJ-deploiement-mailcraft` et `AAAAMMJJ-maj-postes`).
 - Edouard (Mac) : brief `~/Nextcloud/Claude/migration/BRIEF-Edouard-MailCraft-vip-ucs-20261030.md`.
-- update-arch (JeanClaude) : met MailCraft à jour **avant** les paquets système, depuis la branche courante.
+- update-arch (JeanClaude, Bernard) : met MailCraft à jour **avant** les paquets système, depuis la branche
+  courante, compilé en `MAILCRAFT_BUILD_SHA=dev` (jamais de proposition de mise à jour UCS).
 
 ## Automatisation
 

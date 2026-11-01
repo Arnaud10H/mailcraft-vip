@@ -2129,11 +2129,6 @@ msgid "Contact"
 msgstr "Contact"
 
 #. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "Contacts"
-msgstr "Contacts"
-
-#. interface
 #: crates/ui-egui/src/dialogs.rs
 #, fuzzy
 msgid "Contacts don't go to Deleted Items."
@@ -5966,8 +5961,8 @@ msgstr "La semaine prochaine"
 
 #. command label, interface
 #: crates/engine/src/cmd/dav.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/forms.rs
-msgid "Nextcloud Calendar and Contacts"
-msgstr "Agenda et contacts Nextcloud"
+msgid "Nextcloud Calendar"
+msgstr "Agenda Nextcloud"
 
 #. interface
 #: crates/ui-egui/src/merge_contacts.rs
@@ -7360,8 +7355,8 @@ msgstr ""
 
 #. interface
 #: crates/ui-egui/src/backstage.rs
-msgid "Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)"
-msgstr "Lire ici votre agenda et vos contacts Nextcloud (CalDAV/CardDAV)"
+msgid "Read your Nextcloud calendar here (CalDAV)"
+msgstr "Lire ici votre agenda Nextcloud (CalDAV)"
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
@@ -9782,15 +9777,15 @@ msgid "The calendar \"{name}\" only shows when its owner is busy: this account c
 msgstr ""
 
 #. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "The calendar and the contacts come down with each Send/Receive, for reading. Leave the address empty to stop."
-msgstr "L'agenda et les contacts sont téléchargés à chaque Envoyer/Recevoir, en lecture seule. Laissez l'adresse vide pour arrêter."
-
-#. interface
 #: crates/ui-egui/src/calendar_sync.rs
 #, fuzzy
 msgid "The calendar changes couldn't be taken in: {error}"
 msgstr "Les modifications du calendrier n'ont pas pu être intégrées : {error}"
+
+#. interface
+#: crates/ui-egui/src/forms/nextcloud.rs
+msgid "The calendar comes down with each Send/Receive, for reading. Leave the address empty to stop."
+msgstr "L'agenda est téléchargé à chaque Envoyer/Recevoir, en lecture seule. Laissez l'adresse vide pour arrêter."
 
 #. interface
 #: crates/ui-egui/src/calendar_sync.rs
@@ -14775,6 +14770,9 @@ msgstr "« {subject} » était trop volumineux pour être téléchargé : seul s
 #, fuzzy
 msgid "“{subject}” wasn't found on its server, so it can't be forwarded as an attachment"
 msgstr "« {subject} » est introuvable sur son serveur, il ne peut donc pas être transféré en tant que pièce jointe"
+
+#~ msgid "Contacts"
+#~ msgstr "Contacts"
 
 #, fuzzy
 #~ msgid "MailCraft doesn't send mail from a JMAP account yet"

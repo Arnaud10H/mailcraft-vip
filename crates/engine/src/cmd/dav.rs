@@ -1,13 +1,15 @@
-//! A CalDAV/CardDAV server (Nextcloud) read with an account's Send/Receive: `account.nextcloud`
-//! says where it is, the host brings its calendar and its contacts down with the run
-//! ([`mailcraft_model::vip::DavDownload`]), and [`take_in`] merges them like a Microsoft 365
+//! A CalDAV server (Nextcloud) read with an account's Send/Receive: `account.nextcloud` says
+//! where it is, the host brings its calendar down with the run
+//! ([`mailcraft_model::vip::DavDownload`]), and [`take_in`] merges it like a Microsoft 365
 //! account's ([`super::remote`]): what the server no longer has goes, nothing made here is touched.
+//! Contacts are not read: MailCraft VIP is a client to follow the integrated branch, not a
+//! synchronisation of the address book.
 //!
-//! For reading: the calendar is read-only here, and its contacts can't be changed (the server
-//! would not hear of it). ponytail: read-only; send changes back (PUT/DELETE with If-Match) when needed.
+//! For reading: the calendar is read-only here. ponytail: read-only; send changes back
+//! (PUT/DELETE with If-Match) when needed.
 
 use mailcraft_model::Id;
-use mailcraft_model::remote::{ContactsDownload, EventsDownload, RemoteContact, RemoteEvent};
+use mailcraft_model::remote::{EventsDownload, RemoteEvent};
 use mailcraft_model::vip::{Dav, DavDownload};
 use serde_json::{Value, json};
 
@@ -20,8 +22,8 @@ const REMOTE: &str = "dav";
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("account.nextcloud", "Nextcloud Calendar and Contacts", "File › Info", link).params(
-            r#"{"account"?: number, "url": "https://cloud.example.com" ("" unlinks and removes what came from it), "username"?: string, "calendar"?: path, "addressbook"?: path} — read with each Send/Receive; the password is asked once and kept in the system keyring"#,
+        CommandSpec::new("account.nextcloud", "Nextcloud Calendar", "File › Info", link).params(
+            r#"{"account"?: number, "url": "https://cloud.example.com" ("" unlinks and removes what came from it), "username"?: string, "calendar"?: path} — read with each Send/Receive; the password is asked once and kept in the system keyring"#,
         ),
     ]
 }
@@ -51,8 +53,8 @@ fn link(s: &mut Session, v: &Value) -> CmdResult {
     if username.is_empty() || username.len() > 200 || username.chars().any(|c| c.is_control() || c == ':') {
         return Err(fail("`username` is required"));
     }
-    let dav = Dav { url, username, calendar: path("calendar")?, addressbook: path("addressbook")? };
-    let out = json!({"account": account, "calendar": dav.calendar_path(), "addressbook": dav.addressbook_path()});
+    let dav = Dav { url, username, calendar: path("calendar")? };
+    let out = json!({"account": account, "calendar": dav.calendar_path()});
     s.mailbox.account_mut(account)?.dav = Some(dav);
     Ok(out)
 }
@@ -106,35 +108,6 @@ pub fn take_in(s: &mut Session, account: Id, download: &DavDownload) -> Result<(
         }
         .for_account(&owner);
         remote::take_in_events(s, &events)?;
-    }
-    if let Some(items) = &download.contacts {
-        let mut contacts = Vec::new();
-        for item in items {
-            for c in mailcraft_vcard::parse(&item.data) {
-                let mut r = RemoteContact {
-                    id: item.href.clone(),
-                    change_key: item.etag.clone(),
-                    display_name: c.display_name,
-                    first: c.first,
-                    middle: c.middle,
-                    last: c.last,
-                    nickname: c.nickname,
-                    company: c.company,
-                    title: c.title,
-                    department: c.department,
-                    emails: c.emails,
-                    phones: c.phones,
-                    addresses: c.addresses,
-                    websites: c.websites,
-                    birthday: c.birthday,
-                    notes: c.notes,
-                    modified: 0,
-                };
-                r.tidy();
-                contacts.push(r);
-            }
-        }
-        remote::apply_contacts(s, &ContactsDownload { complete: true, contacts, ..Default::default() }.for_account(&owner))?;
     }
     Ok(())
 }

@@ -15,7 +15,7 @@ Chaque fonction est une commande. On la retrouve dans le ruban, dans la recherch
 | Modèles de message | `template.save`, `template.remove`, `template.list`, `insert.quickParts` | Message › Inclure › Templates |
 | Réponse automatique (absence), pour tout serveur IMAP | `account.automaticReplies` | Fichier › Infos › Automatic Replies |
 | Désabonnement d'une liste (RFC 2369 / 8058) | `mail.unsubscribe`, `ui.unsubscribe` | Accueil › Indicateurs › Unsubscribe |
-| Agenda et contacts Nextcloud (CalDAV/CardDAV), en lecture, à chaque Envoyer/Recevoir | `account.nextcloud` | Fichier › Infos › Nextcloud Calendar and Contacts |
+| Agenda Nextcloud (CalDAV), en lecture, à chaque Envoyer/Recevoir | `account.nextcloud` | Fichier › Infos › Nextcloud Calendar |
 
 Ces fonctions se déclenchent sur le courrier qui arrive dans la boîte de réception (`crates/engine/src/cmd/vip.rs`, `arrived`) :
 - marquage VIP ;
@@ -32,7 +32,7 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 | Libellés | Remplacés par les catégories de MailCraft. |
 | Recherche Meilisearch | Remplacée par la recherche locale de MailCraft : hors ligne, sur toutes les boîtes, avec opérateurs. L'index de VIP Mail ne contenait que 79 mails, jamais nettoyés. |
 | Tri par IA, résumé, réponses suggérées | Pas dans l'app. Claude Code passe par le serveur MCP `mailcraft` (`mailcraft-cli mcp --connect 127.0.0.1:7991`, déjà enregistré). |
-| CalDAV / CardDAV (Nextcloud) | Porté, **en lecture** : l'agenda « Nextcloud » est en lecture seule ici, et les contacts ne se modifient pas. Pour créer ou modifier, passer par Nextcloud. |
+| CalDAV (Nextcloud) | Porté, **en lecture** : l'agenda « Nextcloud » est en lecture seule ici. Pour créer ou modifier, passer par Nextcloud. Les contacts Nextcloud (CardDAV) ne sont **pas** synchronisés : MailCraft VIP sert à suivre la branche intégrée sur le parc, pas à synchroniser le carnet d'adresses. |
 | Actions Dolibarr / Bench depuis un mail (devis, tiers, tâche) | Compétence Claude Code `mailcraft-dolibarr` (`~/Nextcloud/Claude/skills/`) : elle lit le mail par le MCP et appelle l'API. Le rattachement d'un mail à un projet n'a jamais servi et n'est pas repris. |
 | Multi-utilisateur, PWA, Electron, APK | Hors sujet pour une app de bureau. |
 
@@ -90,12 +90,12 @@ python3 -I ~/Nextcloud/Claude/migration/vipmail/import-vipmail.py
 
 ## Nextcloud
 
-Dans Fichier › Infos › Nextcloud Calendar and Contacts, renseigner :
+Dans Fichier › Infos › Nextcloud Calendar, renseigner :
 - l'adresse : `https://cloud.happyinformatique.com` ;
 - l'identifiant : `arnaud` ;
 - un mot de passe d'application Nextcloud (Paramètres › Sécurité).
 
-Les chemins par défaut sont ceux de Nextcloud (agenda `personal`, carnet `contacts`). Le mot de passe va dans le trousseau. L'agenda va d'un mois en arrière à un an en avant ; les séries sont dépliées par le serveur.
+Le chemin par défaut est celui de Nextcloud (agenda `personal`). Les contacts déjà descendus par une version précédente restent : délier puis relier Nextcloud (adresse vide, OK, puis la remettre) les efface. Le mot de passe va dans le trousseau. L'agenda va d'un mois en arrière à un an en avant ; les séries sont dépliées par le serveur.
 
 ## Compte CEVA (Microsoft 365)
 

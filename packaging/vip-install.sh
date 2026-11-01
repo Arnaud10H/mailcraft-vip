@@ -7,6 +7,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# "dev": the app never offers UCS-Care-Group's updates (they would be a version without the VIP features).
+export MAILCRAFT_BUILD_SHA=dev
 cargo build --release -p mailcraft -p mailcraft-cli
 install -Dm755 target/release/mailcraft "$HOME/.local/bin/mailcraft"
 install -Dm755 target/release/mailcraft-cli "$HOME/.local/bin/mailcraft-cli"

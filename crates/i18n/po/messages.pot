@@ -1825,11 +1825,6 @@ msgid "Contact"
 msgstr ""
 
 #. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "Contacts"
-msgstr ""
-
-#. interface
 #: crates/ui-egui/src/dialogs.rs
 msgid "Contacts don't go to Deleted Items."
 msgstr ""
@@ -5098,7 +5093,7 @@ msgstr ""
 
 #. command label, interface
 #: crates/engine/src/cmd/dav.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/forms.rs
-msgid "Nextcloud Calendar and Contacts"
+msgid "Nextcloud Calendar"
 msgstr ""
 
 #. interface
@@ -6305,7 +6300,7 @@ msgstr ""
 
 #. interface
 #: crates/ui-egui/src/backstage.rs
-msgid "Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)"
+msgid "Read your Nextcloud calendar here (CalDAV)"
 msgstr ""
 
 #. ribbon
@@ -8372,13 +8367,13 @@ msgid "The calendar \"{name}\" only shows when its owner is busy: this account c
 msgstr ""
 
 #. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "The calendar and the contacts come down with each Send/Receive, for reading. Leave the address empty to stop."
+#: crates/ui-egui/src/calendar_sync.rs
+msgid "The calendar changes couldn't be taken in: {error}"
 msgstr ""
 
 #. interface
-#: crates/ui-egui/src/calendar_sync.rs
-msgid "The calendar changes couldn't be taken in: {error}"
+#: crates/ui-egui/src/forms/nextcloud.rs
+msgid "The calendar comes down with each Send/Receive, for reading. Leave the address empty to stop."
 msgstr ""
 
 #. interface

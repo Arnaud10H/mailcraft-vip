@@ -391,8 +391,8 @@ pub struct Account {
     /// ([`Mailbox::accounts`]). `None` for every other account.
     #[serde(skip)]
     pub as_written: Option<AsWritten>,
-    /// A CalDAV/CardDAV server (Nextcloud) whose calendar and contacts come down with this
-    /// account's Send/Receive, for reading. Its password is in the system keyring only.
+    /// A CalDAV server (Nextcloud) whose calendar comes down with this account's Send/Receive,
+    /// for reading. Its password is in the system keyring only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dav: Option<crate::vip::Dav>,
 }

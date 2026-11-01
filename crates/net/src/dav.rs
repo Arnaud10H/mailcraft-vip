@@ -1,8 +1,7 @@
-//! The calendar and the contacts of a CalDAV/CardDAV server (Nextcloud), for reading: one
-//! `REPORT` for the events of a stretch, expanded by the server into their occurrences, and one
-//! for every contact. Basic authentication, inside TLS only (`http::Url` takes nothing else but
-//! this machine). What comes back is the server's text as it is: the engine reads the iCalendar
-//! and the vCards.
+//! The calendar of a CalDAV server (Nextcloud), for reading: one `REPORT` for the events of a
+//! stretch, expanded by the server into their occurrences. Basic authentication, inside TLS only
+//! (`http::Url` takes nothing else but this machine). What comes back is the server's text as it
+//! is: the engine reads the iCalendar.
 //!
 //! The answer is as hostile as any server's: read as a stream that takes no DTD, with every field
 //! and the number of items capped.
@@ -27,8 +26,8 @@ const MAX_FIELD: usize = 1 << 20;
 const MAX_DEPTH: usize = 32;
 const PATIENCE: Duration = Duration::from_secs(60);
 
-/// Bring down what the server has: the events from a month back to a year ahead of `now`, and
-/// every contact. With the problems, one line each, that left either out.
+/// Bring down the events the server has from a month back to a year ahead of `now`. With the
+/// problem, in one line, that left them out.
 pub fn download(dav: &Dav, password: &str, now: Timestamp) -> (DavDownload, Vec<String>) {
     let (from, to) = (now - BEHIND, now + AHEAD);
     let mut out = DavDownload { from, to, ..Default::default() };
@@ -40,11 +39,6 @@ pub fn download(dav: &Dav, password: &str, now: Timestamp) -> (DavDownload, Vec<
     match report(dav, password, &dav.calendar_path(), &calendar) {
         Ok(items) => out.events = Some(items),
         Err(e) => errors.push(format!("Nextcloud calendar: {e}")),
-    }
-    let contacts = r#"<?xml version="1.0" encoding="utf-8"?><card:addressbook-query xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav"><d:prop><d:getetag/><card:address-data/></d:prop></card:addressbook-query>"#;
-    match report(dav, password, &dav.addressbook_path(), contacts) {
-        Ok(items) => out.contacts = Some(items),
-        Err(e) => errors.push(format!("Nextcloud contacts: {e}")),
     }
     (out, errors)
 }
@@ -72,7 +66,7 @@ fn report(dav: &Dav, password: &str, path: &str, body: &str) -> Result<Vec<DavIt
 }
 
 /// The items of a `multistatus` answer: each `response` with its `href`, `getetag` and
-/// `calendar-data` or `address-data`. Those without data are left out. `None`: not readable.
+/// `calendar-data`. Those without data are left out. `None`: not readable.
 pub(crate) fn multistatus(xml: &str) -> Option<Vec<DavItem>> {
     let mut reader = Reader::from_str(xml);
     let config = reader.config_mut();
@@ -90,7 +84,7 @@ pub(crate) fn multistatus(xml: &str) -> Option<Vec<DavItem>> {
                 let local = AsRef::<str>::as_ref(&e.local_name()).as_bytes().to_vec();
                 match local.as_slice() {
                     b"response" => item = DavItem::default(),
-                    b"href" | b"getetag" | b"calendar-data" | b"address-data" => field = Some((local, String::new())),
+                    b"href" | b"getetag" | b"calendar-data" => field = Some((local, String::new())),
                     _ => {}
                 }
             }
@@ -101,7 +95,7 @@ pub(crate) fn multistatus(xml: &str) -> Option<Vec<DavItem>> {
                     match name.as_slice() {
                         b"href" if item.href.is_empty() => item.href = http::decode(text.trim()),
                         b"getetag" => item.etag = text.trim().trim_matches('"').to_string(),
-                        b"calendar-data" | b"address-data" => item.data = text,
+                        b"calendar-data" => item.data = text,
                         _ => {}
                     }
                 }

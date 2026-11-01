@@ -31,7 +31,7 @@ pub enum Form {
     Junk(Box<junk::JunkForm>),
     /// Automatic Replies (out of office).
     AutoReply(Box<auto_reply::AutoReplyForm>),
-    /// Nextcloud calendar and contacts (CalDAV/CardDAV).
+    /// Nextcloud calendar (CalDAV).
     Nextcloud(Box<nextcloud::NextcloudForm>),
 }
 
@@ -85,7 +85,7 @@ impl Form {
             Form::Rules(_) => tl!("Rules").to_string(),
             Form::Junk(_) => tl!("Junk E-mail Options").to_string(),
             Form::AutoReply(_) => tl!("Automatic Replies").to_string(),
-            Form::Nextcloud(_) => tl!("Nextcloud Calendar and Contacts").to_string(),
+            Form::Nextcloud(_) => tl!("Nextcloud Calendar").to_string(),
         }
     }
 

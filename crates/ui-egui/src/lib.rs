@@ -1245,7 +1245,7 @@ pub struct MailApp {
     /// The file the window started with (the owner's own mailbox, or the one `--mailbox` named),
     /// which is never unconfirmed.
     pub(crate) own_mailbox: Option<String>,
-    /// The password of each account's Nextcloud (CalDAV/CardDAV) server, for this session.
+    /// The password of each account's Nextcloud (CalDAV) server, for this session.
     dav_passwords: std::collections::HashMap<Id, String>,
     /// Why the system's credential store couldn't be used this session, once that has been found
     /// out; the owner has been told.

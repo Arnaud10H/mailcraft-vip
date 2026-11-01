@@ -161,7 +161,7 @@ pub(crate) fn sync_as(request: &SyncRequest, limits: Limits, host: Host, cancel:
     if let Some(imap) = &imap {
         run.note(imap);
     }
-    // The calendar and the contacts of the account's CalDAV/CardDAV server, for reading.
+    // The calendar of the account's CalDAV server, for reading.
     if let Some(dav) = request.account.dav.as_ref().filter(|_| !request.push_only && !request.dav_password.is_empty() && !run.stopped) {
         let (download, errors) = crate::dav::download(dav, &request.dav_password, mailcraft_time::now());
         run.out.dav = Some(download);
