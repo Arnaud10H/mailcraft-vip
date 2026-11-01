@@ -477,6 +477,7 @@ fn preview(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
                         ..mailcraft_model::Attachment::new(p.name.clone(), p.mime.clone(), Vec::new())
                     })
                     .collect(),
+                id: crate::reading::remote::PREVIEW,
                 ..mailcraft_model::Message::default()
             };
             let m = std::sync::Arc::new(m);
@@ -488,7 +489,7 @@ fn preview(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
         ui.label(egui::RichText::new(tl!("As recipients see it")).font(regular(11.5)).color(t.text_dim));
         egui::Frame::NONE.fill(t.surface).stroke(egui::Stroke::new(1.0, t.border)).inner_margin(10.0).show(ui, |ui| {
             // Its own scrolling area, so that what it senses (selecting its text) stays inside it.
-            egui::ScrollArea::vertical().id_salt("signature_preview").max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("signature_preview").max_height(640.0).min_scrolled_height(640.0).auto_shrink([false, true]).show(ui, |ui| {
                 crate::reading::show_plain_view(app, ui, &message, crate::reading::Place::Preview);
             });
         });

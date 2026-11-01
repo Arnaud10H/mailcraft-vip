@@ -56,6 +56,9 @@ pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const AT_A_TIME: usize = 4;
 /// How long the host is waited on for one picture, in milliseconds (it gives up sooner by itself).
 const PATIENCE_MS: f64 = 60_000.0;
+/// The number the sample reply of File › Signatures goes by: its pictures on the web are the
+/// owner's own (the addresses they wrote in their HTML signature), so they are shown.
+pub const PREVIEW: Id = Id::MAX;
 /// Most senders whose pictures are always downloaded, and most domains.
 pub const MAX_SENDERS: usize = 500;
 pub const MAX_DOMAINS: usize = 500;
@@ -288,7 +291,9 @@ pub fn tick(app: &mut MailApp, ctx: &egui::Context) {
     // What was wanted a frame ago is asked for now, if its message may still show it: a say-so
     // that was taken back in between is taken back for these too.
     let waiting = std::mem::take(&mut state.waiting);
-    let allowed = |message: &Id| app.session.mailbox.messages.get(message).is_some_and(|m| access(app, m) == Access::Allowed);
+    let allowed = |message: &Id| {
+        *message == PREVIEW || app.session.mailbox.messages.get(message).is_some_and(|m| access(app, m) == Access::Allowed)
+    };
     let waiting: Vec<(Id, Arc<str>)> = waiting.into_iter().filter(|(message, _)| allowed(message)).collect();
     let state = &mut app.remote_pictures;
     if let Some(download) = &app.services.pictures

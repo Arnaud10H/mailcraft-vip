@@ -319,9 +319,20 @@ fn quote_message(app: &MailApp, ctx: &egui::Context) -> Option<Arc<Message>> {
 }
 
 /// `m` shown read-only through the display blocks, as at `place` ([`Place::Preview`]): its own
-/// pictures only, nothing from the web.
+/// pictures, and those on the web of the owner's own signature (the sample reply, numbered
+/// [`remote::PREVIEW`]), downloaded as for a message the owner asked them for.
 pub(crate) fn show_plain_view(app: &mut MailApp, ui: &mut Ui, m: &Arc<Message>, place: Place) {
-    view::show(app, ui, m, place, Access::Blocked);
+    let ctx = ui.ctx().clone();
+    remote::tick(app, &ctx);
+    let mut access = Access::Blocked;
+    if place == Place::Preview && m.id == remote::PREVIEW && remote::available(app) {
+        let doc = view::doc_shown(&ctx, m, place, true, view::env_of(ui));
+        if !doc.remote.is_empty() {
+            remote::want(app, &ctx, m, &doc);
+            access = Access::Allowed;
+        }
+    }
+    view::show(app, ui, m, place, access);
 }
 
 /// Pictures the host has brought are taken in, whatever is on screen ([`remote::tick`]).
