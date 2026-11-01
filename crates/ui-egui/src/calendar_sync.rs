@@ -39,7 +39,7 @@ use mailcraft_model::sync::Tokens;
 use mailcraft_time::{DateTime, Timestamp};
 use serde_json::{Value, json};
 
-use crate::{CalendarCheckRequest, CalendarCheckResult, GraphRequest, GraphResult, MailApp, now_ms};
+use crate::{CalendarCheckRequest, CalendarCheckResult, DavRequest, GraphRequest, GraphResult, MailApp, now_ms};
 
 /// How often the calendar is asked for while it is in front of the owner, and otherwise
 /// (milliseconds).
@@ -141,7 +141,7 @@ impl MailApp {
     pub(crate) fn calendar_tick(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.focused);
         self.calendar_tick_at(focused, now_ms());
-        if self.services.graph.is_none() || !self.auto_sync {
+        if (self.services.graph.is_none() && self.services.dav.is_none()) || !self.auto_sync {
             return;
         }
         if self.calendar.rx.is_some() {
@@ -171,10 +171,12 @@ impl MailApp {
     }
 
     /// The accounts whose calendar is kept in step now: those whose calendar a Microsoft server
-    /// keeps, and the shared mailboxes with a calendar ticked (#70).
+    /// keeps, the shared mailboxes with a calendar ticked (#70), and those whose calendars and
+    /// contacts a CalDAV/CardDAV server keeps.
     fn calendar_accounts(&self) -> Vec<Id> {
         let mut accounts = self.microsoft_accounts();
         accounts.extend(self.shared_calendar_accounts());
+        accounts.extend(self.dav_accounts());
         accounts
     }
 
@@ -198,7 +200,7 @@ impl MailApp {
         if came_back && focused && in_front {
             self.calendar.due = true;
         }
-        if !self.auto_sync || self.services.graph.is_none() {
+        if !self.auto_sync || (self.services.graph.is_none() && self.services.dav.is_none()) {
             return false;
         }
         // One at a time; and a Send/Receive that is about to ask Graph, or is asking, goes first.
@@ -353,6 +355,9 @@ impl MailApp {
     /// screen were last asked for (and brings no settings along).
     fn calendar_job(&mut self, account: Id, push: bool, now: f64, round: Option<(Timestamp, Timestamp)>) -> bool {
         let Some(owner) = self.session.mailbox.account(account).cloned() else { return false };
+        if owner.kind.is_dav() {
+            return self.dav_job(owner, push, now, round);
+        }
         // A shared mailbox's calendars are read with the sign-in of the account it is opened
         // through, and with a token of their own (#70).
         let shared = owner.is_shared();
@@ -412,6 +417,43 @@ impl MailApp {
         true
     }
 
+    /// [`calendar_job`](Self::calendar_job) for an account whose calendars and contacts a
+    /// CalDAV/CardDAV server keeps: the same job, with the account's password in place of a
+    /// token. Without a password (none given, none remembered) nothing starts: a Send/Receive
+    /// asks for it.
+    fn dav_job(&mut self, owner: mailcraft_model::Account, push: bool, now: f64, round: Option<(Timestamp, Timestamp)>) -> bool {
+        let account = owner.id;
+        let Some(dav) = &self.services.dav else { return false };
+        let password = match self.passwords.get(&account).cloned() {
+            Some(password) => password,
+            None => match self.remembered("password", &owner.email) {
+                Some(password) => {
+                    self.passwords.insert(account, password.clone());
+                    password
+                }
+                None => return false,
+            },
+        };
+        let _ = self.calendar.by_hand.remove(&account);
+        let changes = if push { self.calendar_changes(account) } else { None };
+        let carried = changes.is_some();
+        if let Some(changes) = &changes {
+            self.calendar.sent.insert(account, (changes.clone(), now));
+        }
+        let stretch = round.unwrap_or_else(|| self.calendar_window());
+        let directory = round.is_none() && self.directory_due(account, now);
+        let asks = self.calendar_asks(account, directory, Some(stretch)).into_iter().map(|ask| ask.calendar).collect();
+        let ask = DavRequest { account: owner, password, directory, calendar: Some(stretch), changes, asks };
+        self.calendar.directory = directory;
+        self.calendar.rx = Some((account, carried, now, dav(ask)));
+        if round.is_none() {
+            self.calendar.checked.insert(account, now);
+            self.calendar.shown.insert(account, self.calendar_window());
+            self.calendar.due = false;
+        }
+        true
+    }
+
     /// The calendar job answered: keep its token, take in what the server said to the changes
     /// and what it has in the days that were asked for. (Public for a host's tests.)
     pub fn poll_calendar(&mut self) {
@@ -433,6 +475,12 @@ impl MailApp {
         }
         if result.sign_in_refused {
             log::warn!("calendar, account {account}: the sign-in was refused; the next Send/Receive asks the owner");
+            // A calendar server that refused the password: it is forgotten, and asked for again
+            // by the next Send/Receive of the account.
+            if self.session.mailbox.account(account).is_some_and(|a| a.kind.is_dav()) {
+                self.forget_password(account);
+                self.status(tl!("The calendar server refused the password: Send/Receive asks for it again"));
+            }
         }
         let mut errors = std::mem::take(&mut result.errors);
         if result.token_refused {

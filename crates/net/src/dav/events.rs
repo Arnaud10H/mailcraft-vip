@@ -216,7 +216,7 @@ fn remote_of(event: &Event, resource: &Resource, owner: &str, offset_at: &dyn Fn
         reminder_minutes: event.reminder_minutes,
         categories: event.categories.clone(),
         importance: event.importance,
-        options: event.response_options.clone(),
+        options: event.response_options,
         online: event.online.clone(),
         attachments: event.has_attachments,
         ..Default::default()

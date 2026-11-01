@@ -15,7 +15,7 @@ Chaque fonction est une commande. On la retrouve dans le ruban, dans la recherch
 | Modèles de message | `template.save`, `template.remove`, `template.list`, `insert.quickParts` | Message › Inclure › Templates |
 | Réponse automatique (absence), pour tout serveur IMAP | `account.automaticReplies` | Fichier › Infos › Automatic Replies |
 | Désabonnement d'une liste (RFC 2369 / 8058) | `mail.unsubscribe`, `ui.unsubscribe` | Accueil › Indicateurs › Unsubscribe |
-| Agenda et contacts Nextcloud (CalDAV/CardDAV), en lecture, à chaque Envoyer/Recevoir | `account.nextcloud` | Fichier › Infos › Nextcloud Calendar and Contacts |
+| Compte Nextcloud / CalDAV : tous les agendas et carnets d'adresses du serveur, en lecture et en écriture (créer, déplacer, modifier, supprimer un rendez-vous) | `account.add` (`kind: "dav"`), `account.edit` | Fichier › Ajouter un compte › tuile « Nextcloud or CalDAV » |
 
 Ces fonctions se déclenchent sur le courrier qui arrive dans la boîte de réception (`crates/engine/src/cmd/vip.rs`, `arrived`) :
 - marquage VIP ;
@@ -32,7 +32,7 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 | Libellés | Remplacés par les catégories de MailCraft. |
 | Recherche Meilisearch | Remplacée par la recherche locale de MailCraft : hors ligne, sur toutes les boîtes, avec opérateurs. L'index de VIP Mail ne contenait que 79 mails, jamais nettoyés. |
 | Tri par IA, résumé, réponses suggérées | Pas dans l'app. Claude Code passe par le serveur MCP `mailcraft` (`mailcraft-cli mcp --connect 127.0.0.1:7991`, déjà enregistré). |
-| CalDAV / CardDAV (Nextcloud) | Porté, **en lecture** : l'agenda « Nextcloud » est en lecture seule ici, et les contacts ne se modifient pas. Pour créer ou modifier, passer par Nextcloud. |
+| CalDAV / CardDAV (Nextcloud) | Porté comme un **type de compte** à part entière (voir « Nextcloud » plus bas) : agendas en lecture/écriture, contacts en lecture. Reste à faire : modifier un seul jour d'une série, répondre à une invitation, écrire les contacts. |
 | Actions Dolibarr / Bench depuis un mail (devis, tiers, tâche) | Compétence Claude Code `mailcraft-dolibarr` (`~/Nextcloud/Claude/skills/`) : elle lit le mail par le MCP et appelle l'API. Le rattachement d'un mail à un projet n'a jamais servi et n'est pas repris. |
 | Multi-utilisateur, PWA, Electron, APK | Hors sujet pour une app de bureau. |
 
@@ -88,14 +88,35 @@ python3 -I ~/Nextcloud/Claude/migration/vipmail/import-vipmail.py
 - Il n'importe pas le mot de passe. Au premier Envoyer/Recevoir, MailCraft le demande une fois et le garde dans le trousseau du système. Le mot de passe se trouve dans `~/Nextcloud/Claude/password/credentials.md`.
 - `--dry-run` affiche ce qui serait importé, sans rien écrire.
 
-## Nextcloud
+## Nextcloud (compte CalDAV / CardDAV)
 
-Dans Fichier › Infos › Nextcloud Calendar and Contacts, renseigner :
-- l'adresse : `https://cloud.happyinformatique.com` ;
+Fichier › Ajouter un compte → adresse e-mail → **Advanced options › Let me set up my account
+manually** → tuile **Nextcloud or CalDAV**. Renseigner :
+- l'adresse du serveur : `https://cloud.happyinformatique.com` (la racine suffit : MailCraft trouve
+  le principal et les collections par `.well-known`) ;
 - l'identifiant : `arnaud` ;
-- un mot de passe d'application Nextcloud (Paramètres › Sécurité).
+- un mot de passe d'application Nextcloud (Paramètres › Sécurité). Il est vérifié avant l'ajout
+  (PROPFIND du principal) et gardé dans le trousseau du système.
 
-Les chemins par défaut sont ceux de Nextcloud (agenda `personal`, carnet `contacts`). Le mot de passe va dans le trousseau. L'agenda va d'un mois en arrière à un an en avant ; les séries sont dépliées par le serveur.
+Ce que fait le compte :
+- aucun courrier : pas de serveur IMAP/SMTP, pas de dossiers qui se remplissent ;
+- **tous** les agendas du serveur apparaissent dans le volet Calendrier avec leur nom et leur
+  couleur ; `personal` est « l'agenda du compte » ; un agenda partagé en lecture seule
+  (`current-user-privilege-set` sans `write`) refuse les modifications ici aussi ;
+- les rendez-vous créés, déplacés, modifiés ou supprimés ici partent au serveur par le job du
+  calendrier (PUT `If-None-Match: *` pour un nouveau, GET + PUT `If-Match` pour une modification —
+  la copie du serveur gagne en cas de conflit —, DELETE) ;
+- les séries arrivent avec leur règle (RRULE) et leurs occurrences ; une occurrence modifiée sur
+  le serveur (`RECURRENCE-ID`) est une exception ;
+- tous les carnets d'adresses sont lus (contacts en lecture) ;
+- synchro : les jours à l'écran toutes les 30 s quand le calendrier est devant, le mois en arrière /
+  l'an en avant et les contacts tous les quarts d'heure, et à chaque Envoyer/Recevoir.
+
+Pas encore fait pour ce type de serveur (le changement reste local et l'app le dit) : modifier un
+seul jour d'une série, répondre à une invitation, transférer une réunion, écrire les contacts.
+
+Le serveur factice des tests : `crates/net/src/dav/standin.rs` ; le parcours complet :
+`apps/mailcraft/src/dav_flow.rs`.
 
 ## Compte CEVA (Microsoft 365)
 

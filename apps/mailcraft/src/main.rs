@@ -34,6 +34,8 @@ mod clipboard;
 #[cfg(test)]
 mod control_challenge_flow;
 mod control_server;
+#[cfg(test)]
+mod dav_flow;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
 mod desktop_theme;
 mod diagnostics;
@@ -92,8 +94,8 @@ use std::path::PathBuf;
 use mailcraft_engine::Session;
 use mailcraft_model::sync::Tokens;
 use mailcraft_ui_egui::{
-    AdminConsentAnswer, AdminConsentRequest, CalendarCheckRequest, CalendarCheckResult, CalendarCheckStep, FreeBusyRequest, FreeBusyResult,
-    GraphRequest, GraphResult, MailApp, Services, SettingsUnread, SignInRequest, UiState,
+    AdminConsentAnswer, AdminConsentRequest, CalendarCheckRequest, CalendarCheckResult, CalendarCheckStep, DavRequest, FreeBusyRequest,
+    FreeBusyResult, GraphRequest, GraphResult, MailApp, Services, SettingsUnread, SignInRequest, UiState,
     window_geometry::{WindowGeometry, take_rescue},
 };
 
@@ -786,6 +788,50 @@ fn log_outcome(outcome: &mailcraft_model::remote::EventOutcome) {
     }
 }
 
+/// What a calendar and contacts server does for an account of that kind, as the calendar's own
+/// job asks ([`mailcraft_ui_egui::Services::dav`]): the changes made here go up, its calendars,
+/// the days asked for and its contacts come down, in the shape of a Graph job's answer. Nothing
+/// here stops anything: every trouble is a line in the answer.
+fn dav(request: DavRequest) -> GraphResult {
+    dav_in(request, &mailcraft_time::local_offset_minutes)
+}
+
+/// [`dav`], with how far east of UTC the calendar's zone is at an instant as `offset_at` (minutes).
+fn dav_in(request: DavRequest, offset_at: &dyn Fn(i64) -> i32) -> GraphResult {
+    let job = mailcraft_net::dav::DavJob {
+        account: request.account,
+        password: request.password,
+        directory: request.directory,
+        calendar: request.calendar,
+        changes: request.changes,
+        asks: request.asks,
+    };
+    let out = mailcraft_net::dav::run(&job, mailcraft_time::now(), offset_at);
+    if let Some(uploaded) = &out.uploaded {
+        for outcome in &uploaded.outcomes {
+            log_outcome(outcome);
+        }
+    }
+    for error in &out.errors {
+        log::warn!("calendar server, account {}: {error}", out.account);
+    }
+    // The main calendar's stretch is the one the window takes as "the calendar"; the others come
+    // beside it, as a Microsoft account's other calendars do.
+    let mut events = out.events;
+    let main = events.iter().position(|download| download.calendar.is_empty()).map(|at| events.remove(at));
+    GraphResult {
+        account: out.account,
+        sign_in_refused: out.sign_in_refused,
+        events: main,
+        more_events: events,
+        contacts: out.contacts,
+        uploaded: out.uploaded,
+        calendars: out.calendars,
+        errors: out.errors,
+        ..Default::default()
+    }
+}
+
 /// What Microsoft Graph does for an account before its mail is synchronised: send what waits in
 /// the Outbox, and bring the calendar and the contacts down. Nothing here stops the mail: every
 /// trouble is a line in the answer.
@@ -1448,6 +1494,7 @@ fn services(
     let check_ctx = ctx.clone();
     let approval_ctx = ctx.clone();
     let fetch_ctx = ctx.clone();
+    let dav_ctx = ctx.clone();
     let search_ctx = ctx.clone();
     let tasks_ctx = ctx.clone();
     let ahead_ctx = ctx.clone();
@@ -1489,6 +1536,8 @@ fn services(
             background(&sign_in_ctx, "sign-in", move || sign_in(&ctx, request))
         })),
         graph: Some(Box::new(move |request| background(&graph_ctx, "microsoft graph", move || graph(request)))),
+        // The calendar's own job for a calendar and contacts server (CalDAV/CardDAV).
+        dav: Some(Box::new(move |request| background(&dav_ctx, "calendar server", move || dav(request)))),
         // Messages of a Microsoft account fetched whole, a few at a time (R3.2).
         graph_fetch: Some(Box::new(move |job: mailcraft_ui_egui::graph_fetch::GraphFetchJob| {
             background(&fetch_ctx, "message download", move || mailcraft_net::graph::fetch_messages(&job.access, &job.request, &job.cancel))

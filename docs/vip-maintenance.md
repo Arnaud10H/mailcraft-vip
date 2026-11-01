@@ -52,22 +52,21 @@ logique upstream pour faire passer un patch VIP. Si l'upstream livre l'équivale
 
 | Fichier | Accroche VIP |
 |---|---|
-| `engine/src/cmd/account.rs` | Outbox : `m.send_at` (envoi différé) ; nouveau mail de l'Inbox : `super::vip::arrived` juste avant `apply_rules` (dans `if inbox != sorted`) ; Nextcloud : `super::dav::take_in` avant la progression ; Gmail : `label_changes` / `merge_labels` / `register_labels` / `labels_pushed`, `RemoteOp::Labels` dans la boucle des changements (note en `Some(…)`) ; imports `LabelsPushed`, `own_labels` |
+| `engine/src/cmd/account.rs` | Outbox : `m.send_at` (envoi différé) ; nouveau mail de l'Inbox : `super::vip::arrived` juste avant `apply_rules` (dans `if inbox != sorted`) ; `kind: "dav"` / `dav_server` / `dav_shown` (compte CalDAV, refus de `sync.request`) ; Gmail : `label_changes` / `merge_labels` / `register_labels` / `labels_pushed`, `RemoteOp::Labels` dans la boucle des changements (note en `Some(…)`) ; imports `LabelsPushed`, `own_labels` |
 | `engine/src/cmd/compose.rs` | `send_at: c.send_at` dans `build` ; `vip::mark_follow_up` dans `send` ; `vip::arrived` à la livraison locale |
-| `engine/src/cmd/mod.rs` | `pub mod vip; pub mod dav;` et `vip::specs()` |
+| `engine/src/cmd/mod.rs` | `pub mod vip;`, `vip::specs()`, `mod dav_account_tests` |
 | `engine/src/list.rs` | filtre snooze (`snoozed_until`, `query.wants_snoozed()`), arrivée = fin du snooze |
 | `engine/src/session.rs` | `Compose.send_at`, `Compose.follow_up_days` |
 | `engine/src/agent.rs` | classes des commandes VIP (SAFE / SEND / ACCOUNTS / SETTINGS) — toute nouvelle commande VIP doit y être classée (test `every_command_has_a_class`) |
-| `engine/src/cmd/remote.rs` | `read_only_calendar` (calendrier Nextcloud en `Rights::Read`) |
 | `model/src/message.rs` | `snoozed_until`, `send_at`, `awaiting_reply`, `synced_labels` |
-| `model/src/mailbox.rs` | `Mailbox.vip`, `Account.dav` |
+| `model/src/mailbox.rs` | `Mailbox.vip`, `AccountKind::Dav` (+ `is_dav`), `Account.dav: Option<DavServer>` ; `model/src/dav_server.rs` |
 | `model/src/search.rs` | `Kind::Snoozed`, `is:snoozed` (pas dans `IS_VALUES`, sinon tests de suggestion), `wants_snoozed` |
-| `model/src/sync.rs` | `FolderDelta.labels`, `ServerLabels`, `own_labels`, `LabelsPushed`, `SyncResult.labeled` / `dav`, `pushed_count` |
+| `model/src/sync.rs` | `FolderDelta.labels`, `ServerLabels`, `own_labels`, `LabelsPushed`, `SyncResult.labeled`, `pushed_count` |
 | `model/src/provider.rs` | preset `google()` |
-| `net/src/` | `dav.rs` (quick-xml : API `&str`, `xml10_content`) ; `sync.rs` (Nextcloud + libellés) ; `push.rs` (`RemoteOp::Labels`) ; `fake.rs` (`FakeMessage.labels`) ; `oauth.rs` (dialecte Google) |
+| `net/src/` | `dav/` (mod, read, events, write, standin, tests : job CalDAV/CardDAV, `DavJob` → `DavOutcome`) ; `http.rs` (`Reply.location` / `Reply.etag`) ; `lib.rs` (`test_account` → `dav::check`) ; `sync.rs` (libellés) ; `push.rs` (`RemoteOp::Labels`) ; `fake.rs` (`FakeMessage.labels`) ; `oauth.rs` (dialecte Google) |
 | `proto/src/imap/mod.rs` | `gmail_labels`, `items()`, `X-GM-LABELS` dans `uid_fetch_flags` (avec `Wanted`/`response_cap` de l'upstream) |
-| `ui-egui/src/` | `forms.rs` (`AutoReply`, `Nextcloud` dans tous les `match`) ; `backstage.rs` (tuiles) ; `ribbon.rs` (Snooze, VIP, Unsubscribe, Templates, Delay…) ; `lib.rs` (`dav_passwords`, `adopt_dav_password`) ; `secret_read.rs` (clé `dav` seulement si `a.dav`) ; `account_setup.rs` (connexion Google) |
-| `apps/mailcraft/src/main.rs` | `google_client_id()` |
+| `ui-egui/src/` | `forms.rs` (`AutoReply` dans tous les `match`) ; `backstage.rs` (tuiles VIP, `account_detail` pour `Dav`) ; `ribbon.rs` (Snooze, VIP, Unsubscribe, Templates, Delay…) ; `lib.rs` (`Services::dav`, `DavRequest`, `start_dav`, `dav_accounts`, `forget_password`, `secret_key` pour `Dav`, `can_reach`) ; `calendar_sync.rs` (`dav_job`, comptes Dav dans `calendar_accounts`, mot de passe refusé) ; `account_setup.rs` (connexion Google ; `Kind::Dav`, page serveur, `dav_value`) |
+| `apps/mailcraft/src/main.rs` | `google_client_id()` ; `dav` / `dav_in` (job CalDAV) ; `mod dav_flow` (test de bout en bout) |
 
 Pièges vus au rebase du 30/10 : libellés interdits par `product_names_tests` (pas « Outlook »,
 « Office », « Quick Parts »…) ; textes du ruban absents de `messages.pot` → `cargo xtask i18n` ;

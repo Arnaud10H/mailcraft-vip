@@ -217,6 +217,12 @@ pub struct Services {
     /// background thread: send the Outbox (no "authenticated SMTP" switch stands in its way) and
     /// bring the calendar and the contacts down. Absent in the browser.
     pub graph: Option<Box<dyn Fn(GraphRequest) -> Receiver<GraphResult>>>,
+    /// Desktop: what a calendar and contacts server (CalDAV/CardDAV) does for an account of that
+    /// kind, on a background thread: tell it the changes made here, bring its calendars, the
+    /// days asked for and its contacts down. The answer comes in the shape of a Graph job's
+    /// (events, contacts, calendars, what the server said to the changes), which the window
+    /// takes in the same way. Absent in the browser.
+    pub dav: Option<Box<dyn Fn(DavRequest) -> Receiver<GraphResult>>>,
     /// Desktop: fetch messages of a Microsoft account whole on a background thread (R3.2).
     pub graph_fetch: Option<Box<dyn Fn(graph_fetch::GraphFetchJob) -> Receiver<mailcraft_model::sync::GraphFetchResult>>>,
     /// Desktop: search a Microsoft mailbox on its server, one page, on a background thread
@@ -388,6 +394,12 @@ impl Services {
     /// Whether this build reaches mail servers at all: with mail connections, or over JMAP.
     pub fn can_sync(&self) -> bool {
         self.sync.is_some() || self.jmap.is_some()
+    }
+
+    /// Whether this build reaches any server a Send/Receive is for: mail servers, or calendar
+    /// and contacts servers.
+    pub fn can_reach(&self) -> bool {
+        self.can_sync() || self.dav.is_some()
     }
 }
 
@@ -622,6 +634,31 @@ pub struct GraphRequest {
     pub mail_pieces: Option<std::sync::mpsc::SyncSender<mailcraft_model::sync::GraphMailResult>>,
     /// Set when the owner stops the run (Cancel): it stops after the page in hand.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// What the host is asked to do with a calendar and contacts server for one account
+/// ([`Services::dav`]): the calendar's own job, for an account of that kind.
+pub struct DavRequest {
+    pub account: mailcraft_model::Account,
+    /// The account's password (usually an app password). Never written anywhere.
+    pub password: String,
+    /// Also bring every calendar's list and the contacts of every address book down (the
+    /// wide stretch).
+    pub directory: bool,
+    /// The stretch of the calendars to bring down (Unix seconds, from and up to).
+    pub calendar: Option<(i64, i64)>,
+    /// What was made, changed or deleted in the calendar here, for the server to be told
+    /// before the calendars are brought down.
+    pub changes: Option<mailcraft_model::remote::EventsUpload>,
+    /// The calendars to bring down, by what the server calls them (the account's main calendar
+    /// is the one with no name); empty for all of them.
+    pub asks: Vec<String>,
+}
+
+impl std::fmt::Debug for DavRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DavRequest").field("account", &self.account.id).field("directory", &self.directory).field("calendar", &self.calendar).finish()
+    }
 }
 
 /// What a [`GraphRequest`] came to. Never an error as a whole: mail goes on either way.
@@ -1245,8 +1282,6 @@ pub struct MailApp {
     /// The file the window started with (the owner's own mailbox, or the one `--mailbox` named),
     /// which is never unconfirmed.
     pub(crate) own_mailbox: Option<String>,
-    /// The password of each account's Nextcloud (CalDAV/CardDAV) server, for this session.
-    dav_passwords: std::collections::HashMap<Id, String>,
     /// Why the system's credential store couldn't be used this session, once that has been found
     /// out; the owner has been told.
     pub(crate) secrets_trouble: Option<StoreTrouble>,
@@ -1544,7 +1579,6 @@ impl MailApp {
             settings_unread: None,
             held: Default::default(),
             own_mailbox,
-            dav_passwords: Default::default(),
             secrets_trouble: None,
             tokens: Default::default(),
             graph_tokens: Default::default(),
@@ -2305,6 +2339,10 @@ impl MailApp {
             // (Its whole EWS address: another one, on the same server or not, is another server.)
             let url = a.ews.as_ref().map_or("none", |e| e.url.trim());
             format!("{kind}:{address}|ews={url}")
+        } else if a.kind == mailcraft_model::AccountKind::Dav {
+            // (Its server's address and the name it signs in with: another is another server.)
+            let (url, user) = a.dav.as_ref().map_or(("none", ""), |d| (d.url.trim(), d.username.trim()));
+            format!("{kind}:{address}|dav={url}|user={user}")
         } else {
             format!("{kind}:{address}|imap={}|smtp={}", server(&a.incoming), server(&a.outgoing))
         }
@@ -2363,7 +2401,7 @@ impl MailApp {
     pub(crate) fn forget_every_secret(&mut self) -> Vec<String> {
         let mut keys: Vec<String> = std::mem::take(&mut self.ui.remembered_keys);
         for a in &self.session.mailbox.accounts {
-            for kind in ["password", "refresh", "dav"] {
+            for kind in ["password", "refresh"] {
                 keys.push(Self::secret_key(kind, a));
                 keys.push(Self::legacy_secret_key(kind, &a.email));
             }
@@ -2406,8 +2444,7 @@ impl MailApp {
     pub(crate) fn forget_account_secrets(&mut self, a: &mailcraft_model::Account) {
         let Some(store) = &self.services.secrets else { return };
         let mut gone = Vec::new();
-        // (And the Nextcloud password of an account that names a Nextcloud server: VIP.)
-        for kind in ["password", "refresh", "dav"].into_iter().filter(|kind| *kind != "dav" || a.dav.is_some()) {
+        for kind in ["password", "refresh"] {
             for key in [Self::secret_key(kind, a), Self::legacy_secret_key(kind, &a.email)] {
                 store.delete(&key);
                 if store.get(&key).is_none() {
@@ -2546,17 +2583,6 @@ impl MailApp {
         self.passwords.insert(account, password);
     }
 
-    /// The Nextcloud password the owner just gave, for this session and, when wanted, the next.
-    pub(crate) fn adopt_dav_password(&mut self, account: Id, password: String) {
-        if password.is_empty() {
-            return;
-        }
-        if let Some(address) = self.session.mailbox.account(account).map(|a| a.email.clone()) {
-            self.remember("dav", &address, &password);
-        }
-        self.dav_passwords.insert(account, password);
-    }
-
     /// Start a Send/Receive for an account (default: the first one with a server). Asks for the
     /// password the first time, or has the owner sign in on the provider's page; the answer is
     /// kept in memory until the app closes, and by the operating system when that is wanted.
@@ -2581,7 +2607,7 @@ impl MailApp {
             tl!("This build can't connect to mail servers (a browser can't open mail connections). Use the desktop app, or bring mail in with File › Import.")
                 .to_string()
         };
-        if !self.services.can_sync() {
+        if !self.services.can_reach() {
             return Err(cant_connect());
         }
         let quiet = p.get("quiet").and_then(Value::as_bool).unwrap_or(false);
@@ -2598,13 +2624,20 @@ impl MailApp {
         }
         // A run starts, the owner's or one by itself: full messages paused by Stop go on.
         self.resume_fetch();
-        // Send/Receive the owner asked for: the calendar and contacts follow the round.
+        // Send/Receive the owner asked for: the calendar and contacts follow the round (those of
+        // a calendar and contacts server too, which have no mail round of their own).
         if !quiet {
-            let accounts: Vec<Id> =
-                target.into_iter().chain(p.get("account").is_none().then(|| self.server_accounts()).into_iter().flatten()).collect();
+            let everyone = p.get("account").is_none().then(|| self.server_accounts().into_iter().chain(self.dav_accounts()));
+            let accounts: Vec<Id> = target.into_iter().chain(everyone.into_iter().flatten()).collect();
             for account in accounts {
                 self.calendar_after_round(account);
             }
+        }
+        // A calendar and contacts server has no mail: its password is taken, and its calendar's
+        // own job asked for at once.
+        if let Some(account) = p.get("account").and_then(Value::as_u64).filter(|a| self.session.mailbox.account(*a).is_some_and(|a| a.kind.is_dav()))
+        {
+            return self.start_dav(account, p);
         }
         let account = match p.get("account").and_then(Value::as_u64) {
             Some(account) => account,
@@ -2720,19 +2753,58 @@ impl MailApp {
             };
             request.password = password;
         }
-        if request.account.dav.is_some() {
-            if !self.dav_passwords.contains_key(&account)
-                && let Some(pw) = self.remembered("dav", &address)
-            {
-                self.dav_passwords.insert(account, pw);
-            }
-            request.dav_password = self.dav_passwords.get(&account).cloned().unwrap_or_default();
-        }
         let Some(start) = &self.services.sync else { return Err(tl!("This build can't connect to mail servers").to_string()) };
         self.sync_run = Some((account, None, false, quiet));
         self.sync_rx = Some(MailRun::Imap(start(request)));
         self.session.sync_status = tl!("Sending and receiving…").to_string();
         Ok(json!({"started": true, "account": account}))
+    }
+
+    /// "Send/Receive" for a calendar and contacts account: the password given (or remembered) is
+    /// kept, else asked for, and the calendar's own job is asked to bring everything down now.
+    fn start_dav(&mut self, account: Id, p: &Value) -> Result<Value, String> {
+        if self.services.dav.is_none() {
+            return Err(tl!("This build can't connect to calendar servers").to_string());
+        }
+        let address = self.session.mailbox.account(account).map(|a| a.email.clone()).unwrap_or_default();
+        if let Some(pw) = p.get("password").and_then(Value::as_str).filter(|pw| !pw.is_empty()) {
+            self.passwords.insert(account, pw.to_string());
+        } else if !self.passwords.contains_key(&account)
+            && let Some(pw) = self.remembered("password", &address)
+        {
+            self.passwords.insert(account, pw);
+        }
+        if !self.passwords.contains_key(&account) {
+            self.dialog = dialogs::Dialog::open("password", self, &json!({"account": account}));
+            return Ok(json!({"pending": "password"}));
+        }
+        self.calendar_after_round(account);
+        self.graph_checked.remove(&account);
+        self.calendar.due = true;
+        self.calendar.failures.remove(&account);
+        self.session.sync_status = tl!("Updating calendar and contacts…").to_string();
+        Ok(json!({"started": true, "account": account}))
+    }
+
+    /// Forget an account's password, here and in the operating system's store: a server refused
+    /// it, and the next try asks the owner again.
+    pub(crate) fn forget_password(&mut self, account: Id) {
+        self.passwords.remove(&account);
+        let Some(a) = self.session.mailbox.account(account).cloned() else { return };
+        let key = Self::secret_key("password", &a);
+        if let Some(store) = &self.services.secrets {
+            store.delete(&key);
+        }
+        self.secret_cache.remove(&key);
+    }
+
+    /// The accounts whose calendars and contacts a CalDAV/CardDAV server keeps, when this
+    /// build reaches such servers.
+    pub(crate) fn dav_accounts(&self) -> Vec<Id> {
+        if self.services.dav.is_none() {
+            return Vec::new();
+        }
+        self.session.mailbox.accounts.iter().filter(|a| a.kind.is_dav()).map(|a| a.id).collect()
     }
 
     /// A Send/Receive of an account kept in step through Microsoft Graph (R3): one Graph job

@@ -77,12 +77,8 @@ impl MailApp {
             .accounts
             .iter()
             .flat_map(|a| {
-                // (A Nextcloud password only for an account that names a Nextcloud server: VIP.)
-                ["password", "refresh", "dav"]
-                    .into_iter()
-                    .filter(|kind| *kind != "dav" || a.dav.is_some())
+                ["password", "refresh"]
                     .map(|kind| Ask { key: Self::secret_key(kind, a), old: migrate.then(|| Self::legacy_secret_key(kind, &a.email)) })
-                    .collect::<Vec<_>>()
             })
             .collect();
         let (send, receive) = mpsc::channel();

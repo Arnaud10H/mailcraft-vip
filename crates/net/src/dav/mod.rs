@@ -210,6 +210,8 @@ pub(crate) fn principal(link: &Link<'_>) -> Result<String, NetError> {
     for start in starts {
         match principal_from(link, &start) {
             Ok(path) => return Ok(path),
+            // A sign-in the server refuses at one address it refuses at every other.
+            Err(e) if matches!(&e, NetError::Config(text) if text.contains("refused the user name")) => return Err(e),
             Err(e) => last = e,
         }
     }
@@ -285,7 +287,7 @@ fn collections(link: &Link<'_>, home: &str, calendars: bool) -> Result<Vec<Colle
             .prop("displayname")
             .map(|p| http::tidy(&p.text))
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| href.trim_end_matches('/').rsplit('/').next().map(|last| http::decode(last)).unwrap_or_default());
+            .unwrap_or_else(|| href.trim_end_matches('/').rsplit('/').next().map(http::decode).unwrap_or_default());
         let color = r.prop("calendar-color").and_then(|p| Rgb::parse(p.text.trim().get(..7).unwrap_or(p.text.trim())));
         // A privilege set that is given and lacks `write` (or `write-content`, `all`) is read-only.
         let rights = match r.prop("current-user-privilege-set") {

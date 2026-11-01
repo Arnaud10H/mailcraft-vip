@@ -291,9 +291,7 @@ pub fn tick(app: &mut MailApp, ctx: &egui::Context) {
     // What was wanted a frame ago is asked for now, if its message may still show it: a say-so
     // that was taken back in between is taken back for these too.
     let waiting = std::mem::take(&mut state.waiting);
-    let allowed = |message: &Id| {
-        *message == PREVIEW || app.session.mailbox.messages.get(message).is_some_and(|m| access(app, m) == Access::Allowed)
-    };
+    let allowed = |message: &Id| *message == PREVIEW || app.session.mailbox.messages.get(message).is_some_and(|m| access(app, m) == Access::Allowed);
     let waiting: Vec<(Id, Arc<str>)> = waiting.into_iter().filter(|(message, _)| allowed(message)).collect();
     let state = &mut app.remote_pictures;
     if let Some(download) = &app.services.pictures

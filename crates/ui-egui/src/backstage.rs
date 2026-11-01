@@ -125,6 +125,11 @@ pub(crate) fn account_detail(app: &MailApp, a: &mailcraft_model::Account) -> Str
         AccountKind::Jmap => jmap_line(a),
         // An Exchange server account names its server, and says why it isn't kept in step.
         AccountKind::Exchange => ews_line(app, a),
+        // A calendar and contacts server names its server.
+        AccountKind::Dav => match a.dav.as_ref().and_then(|d| d.host().map(str::to_string)) {
+            Some(host) => crate::i18n::fmt(tl!("Calendars and contacts on {host} (CalDAV, CardDAV) · no mail"), &[("host", &host)]),
+            None => tl!("Calendars and contacts server (CalDAV, CardDAV): check its address in Account Settings").to_string(),
+        },
         // Kept as its file has it: this version neither sends nor receives with it.
         AccountKind::Unknown => tl!("Added by a newer version of MailCraft: send and receive with it there").to_string(),
         AccountKind::Imap => {
@@ -363,11 +368,6 @@ fn info(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     let note = if away { tl!("On: senders get your automatic reply") } else { tl!("Answer new mail while you're away") };
     if tile(ui, "clock", tl!("Automatic Replies"), note, t) {
         let _ = app.run("ui.dialog", json!({"name": "autoReply"}));
-    }
-    let linked = app.session.mailbox.default_account().and_then(|a| a.dav.as_ref()).map(|d| d.url.clone());
-    let note = linked.unwrap_or_else(|| tl!("Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)").to_string());
-    if tile(ui, "server", tl!("Nextcloud Calendar and Contacts"), &note, t) {
-        let _ = app.run("ui.dialog", json!({"name": "nextcloud"}));
     }
     // Everything MailCraft keeps here, gone (#177).
     crate::data_removal::section(app, ui, t);

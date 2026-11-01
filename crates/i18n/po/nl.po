@@ -703,7 +703,7 @@ msgid "Added by a newer version of MailCraft: send and receive with it there"
 msgstr "Toegevoegd door een nieuwere versie van MailCraft: verzend en ontvang in die versie"
 
 #. interface
-#: crates/ui-egui/src/dialogs.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/forms/nextcloud.rs crates/ui-egui/src/merge_contacts.rs crates/ui-egui/src/people_view.rs
+#: crates/ui-egui/src/dialogs.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/merge_contacts.rs crates/ui-egui/src/people_view.rs
 #, fuzzy
 msgid "Address"
 msgstr "Adres"
@@ -899,11 +899,6 @@ msgstr "Een agent vraagt"
 #, fuzzy
 msgid "An agent wants to {what}."
 msgstr "Een agent wil {what}."
-
-#. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "An app password (Settings › Security)"
-msgstr ""
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -1535,7 +1530,7 @@ msgid "By Subject"
 msgstr "Op onderwerp"
 
 #. command label, interface, name, ribbon, ribbon location
-#: crates/engine/src/cmd/calendar.rs crates/engine/src/cmd/calendar_settings.rs crates/engine/src/cmd/view.rs crates/engine/src/session.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/calendar_view.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/forms/nextcloud.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/reading/invitation.rs crates/ui-egui/src/ribbon.rs
+#: crates/engine/src/cmd/calendar.rs crates/engine/src/cmd/calendar_settings.rs crates/engine/src/cmd/view.rs crates/engine/src/session.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/calendar_view.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/reading/invitation.rs crates/ui-egui/src/ribbon.rs
 #, fuzzy
 msgid "Calendar"
 msgstr "Agenda"
@@ -1575,6 +1570,26 @@ msgstr "Agenda en contactpersonen"
 #, fuzzy
 msgid "Calendar and contacts need your permission: File › Info › Connect calendar and contacts"
 msgstr "Agenda en contactpersonen hebben uw toestemming nodig: Bestand › Info › Agenda en contactpersonen verbinden"
+
+#. name
+#: crates/ui-egui/src/account_setup.rs
+msgid "Calendars and contacts (CalDAV, CardDAV), no mail"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Calendars and contacts on a CalDAV/CardDAV server, signed in with a password; no mail"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/backstage.rs
+msgid "Calendars and contacts on {host} (CalDAV, CardDAV) · no mail"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/backstage.rs
+msgid "Calendars and contacts server (CalDAV, CardDAV): check its address in Account Settings"
+msgstr ""
 
 #. interface
 #: crates/ui-egui/src/open_shared.rs
@@ -2191,11 +2206,6 @@ msgstr "Bezig verbinding te maken met de e-mailserver"
 #, fuzzy
 msgid "Contact"
 msgstr "Contactpersoon"
-
-#. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "Contacts"
-msgstr ""
 
 #. interface
 #: crates/ui-egui/src/dialogs.rs
@@ -3449,7 +3459,7 @@ msgid "Fewer than two of these contacts are still here, so there is nothing to m
 msgstr "Er zijn nog minder dan twee van deze contactpersonen, dus er is niets om samen te voegen."
 
 #. command label, name, ribbon location
-#: crates/engine/src/cmd/account.rs crates/engine/src/cmd/calendar/invitation.rs crates/engine/src/cmd/calendar_extra.rs crates/engine/src/cmd/calendar_opened.rs crates/engine/src/cmd/calendar_settings.rs crates/engine/src/cmd/dav.rs crates/engine/src/cmd/file.rs crates/engine/src/cmd/folder.rs crates/engine/src/cmd/graph_switch.rs crates/engine/src/cmd/offline.rs crates/engine/src/cmd/shared.rs crates/engine/src/cmd/signature.rs crates/engine/src/cmd/tasks_remote.rs crates/engine/src/cmd/vip.rs crates/engine/src/cmd/zones.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/menubar.rs
+#: crates/engine/src/cmd/account.rs crates/engine/src/cmd/calendar/invitation.rs crates/engine/src/cmd/calendar_extra.rs crates/engine/src/cmd/calendar_opened.rs crates/engine/src/cmd/calendar_settings.rs crates/engine/src/cmd/file.rs crates/engine/src/cmd/folder.rs crates/engine/src/cmd/graph_switch.rs crates/engine/src/cmd/offline.rs crates/engine/src/cmd/shared.rs crates/engine/src/cmd/signature.rs crates/engine/src/cmd/tasks_remote.rs crates/engine/src/cmd/vip.rs crates/engine/src/cmd/zones.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/menubar.rs
 #, fuzzy
 msgid "File"
 msgstr "Bestand"
@@ -4446,7 +4456,7 @@ msgid "Indexing mail: {percent}%"
 msgstr "E-mail indexeren: {percent}%"
 
 #. command label, interface, name, ribbon location
-#: crates/engine/src/cmd/account.rs crates/engine/src/cmd/dav.rs crates/engine/src/cmd/file.rs crates/engine/src/cmd/graph_switch.rs crates/engine/src/cmd/offline.rs crates/engine/src/cmd/shared.rs crates/engine/src/cmd/tasks_remote.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/menubar.rs
+#: crates/engine/src/cmd/account.rs crates/engine/src/cmd/file.rs crates/engine/src/cmd/graph_switch.rs crates/engine/src/cmd/offline.rs crates/engine/src/cmd/shared.rs crates/engine/src/cmd/tasks_remote.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/lib.rs crates/ui-egui/src/menubar.rs
 #, fuzzy
 msgid "Info"
 msgstr "Info"
@@ -4617,6 +4627,16 @@ msgstr "Item"
 #, fuzzy
 msgid "Items in this calendar are kept on this computer and nowhere else. Above the calendar you can move them to your account's calendar."
 msgstr "Items in deze agenda worden op deze computer bewaard en nergens anders. Boven de agenda kunt u ze verplaatsen naar de agenda van uw account."
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Its calendars and address books are kept in step here; it has no mail. Most servers want an app password (Nextcloud: Settings › Security), not the everyday one."
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Its calendars and contacts are on their way. They are kept in step from now on; it has no mail."
+msgstr ""
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
@@ -6141,9 +6161,14 @@ msgstr "Volgende week"
 msgid "Next week"
 msgstr "Volgende week"
 
-#. command label, interface
-#: crates/engine/src/cmd/dav.rs crates/ui-egui/src/backstage.rs crates/ui-egui/src/forms.rs
-msgid "Nextcloud Calendar and Contacts"
+#. name
+#: crates/ui-egui/src/account_setup.rs
+msgid "Nextcloud or CalDAV"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Nextcloud or CalDAV server"
 msgstr ""
 
 #. interface
@@ -6619,7 +6644,7 @@ msgid "Numbering"
 msgstr "Nummering"
 
 #. interface
-#: crates/ui-egui/src/calendar_sync.rs crates/ui-egui/src/dialogs.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/forms/auto_reply.rs crates/ui-egui/src/forms/nextcloud.rs crates/ui-egui/src/merge_contacts.rs crates/ui-egui/src/settings_notice.rs crates/ui-egui/src/updates.rs
+#: crates/ui-egui/src/calendar_sync.rs crates/ui-egui/src/dialogs.rs crates/ui-egui/src/forms.rs crates/ui-egui/src/forms/auto_reply.rs crates/ui-egui/src/merge_contacts.rs crates/ui-egui/src/settings_notice.rs crates/ui-egui/src/updates.rs
 #, fuzzy
 msgid "OK"
 msgstr "OK"
@@ -7192,7 +7217,7 @@ msgid "Part of your mailbox is damaged"
 msgstr "Een deel van uw postvak is beschadigd"
 
 #. interface
-#: crates/ui-egui/src/account_setup.rs crates/ui-egui/src/forms/nextcloud.rs
+#: crates/ui-egui/src/account_setup.rs
 #, fuzzy
 msgid "Password"
 msgstr "Wachtwoord"
@@ -7585,11 +7610,6 @@ msgstr "Favorieten uit Outlook nu opnieuw lezen"
 #, fuzzy
 msgid "Read with {owner}'s sign-in, for as long as you keep it: the person has to have shared their calendar with you. It is kept on this computer only: it won't appear in Outlook or on your other devices. Microsoft asks you once to let MailCraft read other people's calendars."
 msgstr "Lezen met de aanmelding van {owner}, zolang u die bewaart: de persoon moet diens agenda met u hebben gedeeld. De agenda wordt alleen op deze computer bewaard: die verschijnt niet in Outlook of op uw andere apparaten. Microsoft vraagt u één keer om MailCraft de agenda's van anderen te laten lezen."
-
-#. interface
-#: crates/ui-egui/src/backstage.rs
-msgid "Read your Nextcloud calendar and contacts here (CalDAV/CardDAV)"
-msgstr ""
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
@@ -8894,6 +8914,11 @@ msgstr "sep"
 msgid "September"
 msgstr "september"
 
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Server address"
+msgstr ""
+
 #. name
 #: crates/ui-egui/src/forms.rs
 #, fuzzy
@@ -10085,11 +10110,6 @@ msgid "The calendar \"{name}\" only shows when its owner is busy: this account c
 msgstr "De agenda „{name}” toont alleen wanneer de eigenaar bezet is: dit account kan die niet wijzigen."
 
 #. interface
-#: crates/ui-egui/src/forms/nextcloud.rs
-msgid "The calendar and the contacts come down with each Send/Receive, for reading. Leave the address empty to stop."
-msgstr ""
-
-#. interface
 #: crates/ui-egui/src/calendar_sync.rs
 #, fuzzy
 msgid "The calendar changes couldn't be taken in: {error}"
@@ -10196,6 +10216,11 @@ msgstr ""
 "De agenda van {name} staat nu in uw agendalijst, omdat die met u is gedeeld en geaccepteerd. U hebt die ook op adres geopend, dus die staat er twee keer.\n"
 "\n"
 "De kopie die op adres is geopend verwijderen? De andere blijft, en op de server verandert niets."
+
+#. interface
+#: crates/ui-egui/src/calendar_sync.rs
+msgid "The calendar server refused the password: Send/Receive asks for it again"
+msgstr ""
 
 #. interface
 #: crates/ui-egui/src/shared_calendars.rs
@@ -10559,6 +10584,11 @@ msgstr "De server heeft de aanmelding voor {name} geweigerd: meld u opnieuw aan"
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
+msgid "The server's address must be an https:// address, with no user name in it"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
 #, fuzzy
 msgid "The server's name"
 msgstr "De naam van de server"
@@ -10682,6 +10712,11 @@ msgstr "De to-do's konden niet worden opgehaald: {error}"
 #, fuzzy
 msgid "The to-dos sent couldn't be noted: {error}"
 msgstr "De verzonden to-do's konden niet worden genoteerd: {error}"
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "The user name can't be used (no colon, no control character)"
+msgstr ""
 
 #. interface
 #: crates/ui-egui/src/meeting_dialogs.rs crates/ui-egui/src/reading/invitation.rs crates/ui-egui/src/report_problem.rs
@@ -10874,6 +10909,11 @@ msgstr "Deze build kan een server niet vragen wanneer andere personen bezet zijn
 #, fuzzy
 msgid "This build can't connect to Microsoft"
 msgstr "Deze build kan geen verbinding maken met Microsoft"
+
+#. interface
+#: crates/ui-egui/src/lib.rs
+msgid "This build can't connect to calendar servers"
+msgstr ""
 
 #. interface
 #: crates/ui-egui/src/jmap_mail.rs crates/ui-egui/src/lib.rs
@@ -11712,6 +11752,11 @@ msgstr "Typen"
 
 #. interface
 #: crates/ui-egui/src/account_setup.rs
+msgid "Type the address of the server (https://…)"
+msgstr ""
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
 #, fuzzy
 msgid "Type the name of the incoming mail server"
 msgstr "Typ de naam van de inkomende e-mailserver"
@@ -11862,6 +11907,11 @@ msgid "Updates"
 msgstr "Updates"
 
 #. interface
+#: crates/ui-egui/src/lib.rs
+msgid "Updating calendar and contacts…"
+msgstr ""
+
+#. interface
 #: crates/ui-egui/src/chrome.rs
 #, fuzzy
 msgid "Updating {account}"
@@ -11904,7 +11954,7 @@ msgid "Use {address}"
 msgstr "{address} gebruiken"
 
 #. interface
-#: crates/ui-egui/src/account_setup.rs crates/ui-egui/src/forms/nextcloud.rs
+#: crates/ui-egui/src/account_setup.rs
 #, fuzzy
 msgid "User name"
 msgstr "Gebruikersnaam"
@@ -11920,6 +11970,11 @@ msgstr "Gebruikersnaam"
 #, fuzzy
 msgid "Usually the whole address"
 msgstr "Meestal het volledige adres"
+
+#. interface
+#: crates/ui-egui/src/account_setup.rs
+msgid "Usually your login on the server; the address when empty"
+msgstr ""
 
 #. ribbon
 #: crates/ui-egui/src/ribbon.rs
@@ -12738,7 +12793,7 @@ msgid "a task needs a title"
 msgstr "een taak heeft een titel nodig"
 
 #. what a command says
-#: crates/engine/src/cmd/dav.rs crates/engine/src/cmd/folder.rs crates/engine/src/cmd/signature.rs
+#: crates/engine/src/cmd/folder.rs crates/engine/src/cmd/signature.rs
 #, fuzzy
 msgid "add an account first"
 msgstr "voeg eerst een account toe"
@@ -13535,11 +13590,6 @@ msgid "the account is gone"
 msgstr "het account is verdwenen"
 
 #. what a command says
-#: crates/engine/src/cmd/dav.rs
-msgid "the address must start with https://"
-msgstr ""
-
-#. what a command says
 #: crates/engine/src/cmd/graph_switch.rs
 #, fuzzy
 msgid "the browser can't keep a copy of the mailbox beside it: switch in the desktop app"
@@ -13912,6 +13962,11 @@ msgstr "dit account heeft geen map Concepten"
 #, fuzzy
 msgid "this account has no Outbox folder"
 msgstr "dit account heeft geen map Postvak UIT"
+
+#. what a command says
+#: crates/engine/src/cmd/account.rs
+msgid "this account has no mail: its calendars and contacts are kept in step by the calendar's own job"
+msgstr ""
 
 #. what a command says
 #: crates/engine/src/cmd/compose.rs

@@ -24,7 +24,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use egui::{Align, Align2, Layout, Margin, Rect, Response, RichText, Role, Sense, Stroke, StrokeKind, TextEdit, Ui, WidgetInfo, pos2, vec2};
-use mailcraft_model::{Account, AccountKind, Directory, Id, KeepOffline, OAuth, OAuthProvider, Security, Server, provider};
+use mailcraft_model::{Account, AccountKind, DavServer, Directory, Id, KeepOffline, OAuth, OAuthProvider, Security, Server, provider};
 use serde_json::{Map, Value, json};
 
 use crate::approval::SignInEnd;
@@ -88,13 +88,15 @@ pub enum Kind {
     ICloud,
     /// Any other mail server.
     Other,
+    /// Calendars and contacts on a CalDAV/CardDAV server (Nextcloud and the like), no mail.
+    Dav,
     /// A mailbox on this device, with no server.
     Local,
 }
 
 impl Kind {
     /// The kinds that have servers, in the order of their tiles.
-    const HOSTED: [Kind; 6] = [Kind::Microsoft365, Kind::OutlookCom, Kind::Google, Kind::Yahoo, Kind::ICloud, Kind::Other];
+    const HOSTED: [Kind; 8] = [Kind::Microsoft365, Kind::OutlookCom, Kind::Google, Kind::Yahoo, Kind::ICloud, Kind::Other, Kind::Dav, Kind::Local];
 
     /// What `account.preset` calls the service; `None` for the two that aren't one.
     fn service(self) -> Option<&'static str> {
@@ -104,7 +106,7 @@ impl Kind {
             Kind::Google => Some("google"),
             Kind::Yahoo => Some("yahoo"),
             Kind::ICloud => Some("icloud"),
-            Kind::Other | Kind::Local => None,
+            Kind::Other | Kind::Dav | Kind::Local => None,
         }
     }
 
@@ -116,6 +118,7 @@ impl Kind {
             Kind::Yahoo => "Yahoo",
             Kind::ICloud => "iCloud",
             Kind::Other => "Other (IMAP)",
+            Kind::Dav => "Nextcloud or CalDAV",
             Kind::Local => "This device only",
         }
     }
@@ -128,6 +131,7 @@ impl Kind {
             Kind::Yahoo => "Yahoo Mail",
             Kind::ICloud => "icloud.com, me.com and mac.com",
             Kind::Other => "Any other mail server",
+            Kind::Dav => "Calendars and contacts (CalDAV, CardDAV), no mail",
             Kind::Local => "A mailbox kept here, with no mail server",
         }
     }
@@ -138,6 +142,7 @@ impl Kind {
             Kind::Microsoft365 => "work",
             Kind::OutlookCom | Kind::Google | Kind::Yahoo | Kind::ICloud => "mail",
             Kind::Other => "server",
+            Kind::Dav => "calendar",
             Kind::Local => "device",
         }
     }
@@ -173,6 +178,8 @@ pub enum Action {
 /// How setting the account up ended, for the last page to say.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Outcome {
+    /// A calendar and contacts account: they are on their way, no mail.
+    Calendar,
     /// The first Send/Receive is running.
     Downloading,
     /// It has servers, but its first Send/Receive is still to be started.
@@ -374,6 +381,10 @@ pub struct AccountSetup {
     /// The servers are a guess made from the domain: the page says so.
     guessed: bool,
     password: Secret,
+    /// The account is a calendar and contacts server (CalDAV/CardDAV): the server's address,
+    /// a user name and a password, and no mail servers.
+    dav: bool,
+    dav_url: String,
     /// The application (client) ID Microsoft's sign-in goes by.
     client_id: String,
     /// The Microsoft directory an existing account signs in to.
@@ -476,6 +487,8 @@ impl AccountSetup {
             settings_open: false,
             guessed: false,
             password: Secret::default(),
+            dav: false,
+            dav_url: String::new(),
             client_id: String::new(),
             tenant: String::new(),
             error: String::new(),
@@ -541,6 +554,11 @@ impl AccountSetup {
             w.tenant = line(&oauth.tenant, 64);
         }
         w.oauth = a.oauth.clone();
+        if let Some(server) = a.dav.as_ref().filter(|_| a.kind == AccountKind::Dav) {
+            w.dav = true;
+            w.dav_url = line(&server.url, 2048);
+            w.username = line(&server.username, LINE);
+        }
         w.edit = Some(Editing { id: a.id, baseline: w.fields() });
         if a.kind == AccountKind::Microsoft && !a.is_shared() {
             w.keep_offline = Some((a.keep_offline, a.keep_offline));
@@ -591,6 +609,9 @@ impl AccountSetup {
             return None;
         }
         let name = if self.name.trim().is_empty() { line(fallback, LINE) } else { self.name.trim().to_string() };
+        if self.dav {
+            return Some(("account.add", json!({"email": email, "displayName": name, "kind": "dav", "dav": self.dav_value()})));
+        }
         let mut m = object(json!({"email": email, "displayName": name, "username": self.login(email)}));
         for (key, server) in [("incoming", &self.incoming), ("outgoing", &self.outgoing)] {
             if let Some(v) = server.value() {
@@ -611,6 +632,11 @@ impl AccountSetup {
             }
         }
         Some(("account.add", Value::Object(m)))
+    }
+
+    /// The calendar and contacts server as `account.add` and `account.edit` take it.
+    fn dav_value(&self) -> Value {
+        json!({"url": self.dav_url.trim().trim_end_matches('/'), "username": self.username.trim()})
     }
 
     /// `account.add` for a mailbox on this device only: no user name, no servers.
@@ -646,6 +672,17 @@ impl AccountSetup {
         if self.settings_problem(true).is_some() {
             return None;
         }
+        if self.dav {
+            let server = DavServer { url: self.dav_url.trim().trim_end_matches('/').to_string(), username: self.username.trim().to_string() };
+            return Some(Account {
+                name: email.to_string(),
+                email: email.to_string(),
+                display_name: self.name.trim().to_string(),
+                kind: AccountKind::Dav,
+                dav: Some(server),
+                ..Default::default()
+            });
+        }
         Some(Account {
             name: email.to_string(),
             email: email.to_string(),
@@ -669,6 +706,9 @@ impl AccountSetup {
 
     /// The fields Account Settings can change, as `account.edit` takes them.
     fn fields(&self) -> Map<String, Value> {
+        if self.dav {
+            return object(json!({"displayName": self.name.trim(), "dav": self.dav_value()}));
+        }
         let mut m = object(json!({
             "displayName": self.name.trim(),
             "username": self.username.trim(),
@@ -685,6 +725,15 @@ impl AccountSetup {
     /// What keeps the servers from being used, in the interface language; nothing when they can be. A new
     /// account needs its incoming server (`connected`); an existing one may have none.
     fn settings_problem(&self, connected: bool) -> Option<String> {
+        if self.dav {
+            return match DavServer::check_url(self.dav_url.trim().trim_end_matches('/')) {
+                Ok(()) => DavServer::check_username(self.username.trim())
+                    .err()
+                    .map(|_| tl!("The user name can't be used (no colon, no control character)").to_string()),
+                Err(_) if self.dav_url.trim().is_empty() => Some(tl!("Type the address of the server (https://…)").to_string()),
+                Err(_) => Some(tl!("The server's address must be an https:// address, with no user name in it").to_string()),
+            };
+        }
         let (incoming, outgoing) = (&self.incoming, &self.outgoing);
         if incoming.host.trim().is_empty() {
             if connected {
@@ -892,6 +941,19 @@ impl AccountSetup {
     /// A tile of the Choose page.
     fn pick(&mut self, app: &mut MailApp, kind: Kind) {
         self.picked = true;
+        if kind == Kind::Dav {
+            // No servers to find: the owner says where the calendar server is.
+            if address(&self.email).is_none() {
+                self.error = self.not_an_address();
+                return;
+            }
+            (self.oauth, self.service, self.note, self.guessed) = (None, String::new(), String::new(), false);
+            (self.incoming, self.outgoing) = (ServerFields::default(), ServerFields::default());
+            self.dav = true;
+            self.settings_open = false;
+            self.go(Page::Password);
+            return;
+        }
         let command = if kind == Kind::Local { self.local_command() } else { self.preset_command(None, kind.service()) };
         let answer = match command {
             Some((command, params)) => app.execute(command, params),
@@ -1068,6 +1130,7 @@ impl AccountSetup {
     /// The account exists: start its first download, and say how things stand.
     fn finish(&mut self, app: &mut MailApp, id: Id) {
         self.outcome = match app.execute("ui.sync", json!({"account": id})) {
+            Ok(_) if self.dav => Outcome::Calendar,
             Ok(_) => Outcome::Downloading,
             Err(_) if app.services.sync.is_none() => Outcome::Offline,
             Err(_) => Outcome::Later,
@@ -1325,10 +1388,6 @@ impl AccountSetup {
                     }
                 });
             }
-            let whole = ui.available_width().max(40.0);
-            if tile(ui, Kind::Local, whole, &t).clicked() {
-                action = Some(Action::Pick(Kind::Local));
-            }
             error(ui, &self.error);
         });
         strip(ui, self.page, |ui| {
@@ -1377,7 +1436,9 @@ impl AccountSetup {
         let t = pass.t;
         // A build that can't reach a mail server has no use for a password.
         let asks = app.services.test_account.is_some() || app.services.sync.is_some();
-        let title = if self.service.is_empty() {
+        let title = if self.dav {
+            tl!("Nextcloud or CalDAV server").to_string()
+        } else if self.service.is_empty() {
             tl!("Sign in to your account").to_string()
         } else {
             fmt(tl!("{service} account"), &[("service", &self.service)])
@@ -1385,6 +1446,17 @@ impl AccountSetup {
         page(ui, &t, |ui| {
             heading(ui, &title, &t);
             note(ui, &shown(self.email.trim(), 120), t.text_dim);
+            if self.dav {
+                note(
+                    ui,
+                    tl!(
+                        "Its calendars and address books are kept in step here; it has no mail. Most servers want an app password (Nextcloud: Settings › Security), not the everyday one."
+                    ),
+                    t.text,
+                );
+                self.settings(ui, pass);
+                ui.add_space(2.0);
+            }
             if self.guessed {
                 note(ui, tl!("MailCraft couldn't find the settings for this address. Check the servers below before you connect."), t.orange);
             }
@@ -1397,10 +1469,12 @@ impl AccountSetup {
             } else {
                 note(ui, tl!("This build can't connect to mail servers. The account can still be added."), t.text_dim);
             }
-            ui.add_space(2.0);
-            disclosure(ui, tl!("Change account settings"), &mut self.settings_open, &t);
-            if self.settings_open {
-                indented(ui, |ui| self.settings(ui, pass));
+            if !self.dav {
+                ui.add_space(2.0);
+                disclosure(ui, tl!("Change account settings"), &mut self.settings_open, &t);
+                if self.settings_open {
+                    indented(ui, |ui| self.settings(ui, pass));
+                }
             }
         });
         problem(ui, &self.error);
@@ -1458,6 +1532,7 @@ impl AccountSetup {
                 )
             }
             Outcome::Local => tl!("It is on this device only: nothing is sent to or fetched from a server."),
+            Outcome::Calendar => tl!("Its calendars and contacts are on their way. They are kept in step from now on; it has no mail."),
         };
         page(ui, &t, |ui| {
             ui.add_space(6.0);
@@ -1491,6 +1566,7 @@ impl AccountSetup {
         let asks = self.oauth.is_none() && (app.services.test_account.is_some() || app.services.sync.is_some());
         let how = match &self.oauth {
             Some(oauth) => fmt(tl!("Signs in on the {provider} page in your browser"), &[("provider", oauth.provider.label())]),
+            None if self.dav => tl!("Calendars and contacts on a CalDAV/CardDAV server, signed in with a password; no mail").to_string(),
             None if self.incoming.host.trim().is_empty() && self.outgoing.host.trim().is_empty() => {
                 tl!("On this device only: no mail server").to_string()
             }
@@ -1578,6 +1654,11 @@ impl AccountSetup {
 
     /// The user name and the two servers.
     fn settings(&mut self, ui: &mut Ui, pass: &mut Pass) {
+        if self.dav {
+            field(ui, pass, "davUrl", tl!("Server address"), &mut self.dav_url, "https://cloud.example.org", 2048);
+            field(ui, pass, "username", tl!("User name"), &mut self.username, tl!("Usually your login on the server; the address when empty"), LINE);
+            return;
+        }
         field(ui, pass, "username", tl!("User name"), &mut self.username, tl!("Usually the whole address"), LINE);
         server_row(ui, pass, tl!("Incoming mail (IMAP)"), "incoming", &mut self.incoming, "imap.example.org", (993, 143));
         server_row(ui, pass, tl!("Outgoing mail (SMTP)"), "outgoing", &mut self.outgoing, "smtp.example.org", (465, 587));
@@ -3158,5 +3239,70 @@ mod tests {
         // Let go and pressed again, it is Connect once more.
         press(&mut h, Key::Enter);
         assert_eq!((page(&h), addresses(&h)), (Some(Page::Done), vec!["noor@lumen.example".to_string()]));
+    }
+
+    /// A calendar and contacts server (CalDAV/CardDAV): picked from the tiles, its address and
+    /// the password tried by the host, then the account is added without mail and its calendar's
+    /// own job is asked for at once.
+    #[test]
+    fn a_nextcloud_or_caldav_server_is_added_as_an_account_without_mail() {
+        let mut a = app(false);
+        let looked = lookups(&mut a, None);
+        let tried = checks(&mut a, Some(Ok(())));
+        let synced = syncs(&mut a);
+        let jobs: Log<crate::DavRequest> = Default::default();
+        let log = jobs.clone();
+        a.services.dav = Some(Box::new(move |request: crate::DavRequest| {
+            log.lock().unwrap().push(request);
+            let (_tx, rx) = mpsc::channel();
+            rx
+        }));
+        let mut h = open(a, json!({"email": "ada@example.org", "displayName": "Ada"}));
+        connect_manually(&mut h);
+        click(&mut h, Kind::Dav.title());
+        assert_eq!(page(&h), Some(Page::Password));
+        assert!(says(&h, "Nextcloud or CalDAV server") && says(&h, "app password"));
+        // Without an address nothing is tried: the page says what is missing.
+        type_password(&mut h);
+        click(&mut h, "Connect");
+        assert_eq!(page(&h), Some(Page::Password));
+        assert!(says(&h, "Type the address of the server"));
+        assert!(tried.lock().unwrap().is_empty());
+        {
+            let w = wizard_mut(&mut h);
+            w.dav_url = "https://cloud.example.org/".into();
+            w.username = "ada".into();
+        }
+        h.run_steps(2);
+        click(&mut h, "Connect");
+        h.run_steps(5);
+        // The host tried the server with the password, and nothing of mail was asked.
+        {
+            let tried = tried.lock().unwrap();
+            assert_eq!(tried.len(), 1);
+            let (account, secret) = &tried[0];
+            assert_eq!((account.kind, secret.as_str()), (AccountKind::Dav, TYPED));
+            assert_eq!(account.dav.as_ref().map(|d| (d.url.as_str(), d.username.as_str())), Some(("https://cloud.example.org", "ada")));
+            assert!(account.incoming.is_none() && account.outgoing.is_none());
+        }
+        assert_eq!(page(&h), Some(Page::Done), "{}", wizard(&h).map(|w| w.error.clone()).unwrap_or_default());
+        assert!(says(&h, "ada@example.org is set up") && says(&h, "calendars and contacts are on their way"));
+        {
+            let s = &h.state().session;
+            let account = s.mailbox.accounts.iter().find(|a| a.email == "ada@example.org").unwrap();
+            assert_eq!((account.kind, account.display_name.as_str()), (AccountKind::Dav, "Ada"));
+            assert_eq!(account.dav.as_ref().map(|d| d.url.as_str()), Some("https://cloud.example.org"));
+        }
+        assert!(looked.lock().unwrap().is_empty() && synced.lock().unwrap().is_empty(), "no mail run");
+        // The calendar's own job starts at the next look, with the password, the wide stretch
+        // and every calendar.
+        let now = crate::now_ms();
+        h.state_mut().auto_sync = true;
+        assert!(h.state_mut().calendar_tick_at(true, now));
+        let jobs = jobs.lock().unwrap();
+        assert_eq!(jobs.len(), 1);
+        let job = &jobs[0];
+        assert_eq!((job.account.email.as_str(), job.password.as_str(), job.directory), ("ada@example.org", TYPED, true));
+        assert!(job.calendar.is_some() && job.changes.is_none());
     }
 }
