@@ -12,7 +12,7 @@
 | Upstream actif | `upstream` = https://github.com/UCS-Care-Group/mailcraft (≈100 commits/jour) |
 | Ancien upstream | `origin` = billsecond/mailcraft — **figé depuis le 15/10**, ne plus s'en servir |
 | App installée | `~/.local/bin/mailcraft` (+ `-cli`), lanceur `io.github.billsecond.mailcraft.desktop` (`--control 7991`) |
-| Boîte | `~/.config/mailcraft/mailbox.mailcraft` (compte contact@artisan-digital.eu) |
+| Boîte | `~/.config/mailcraft/mailbox.mailcraft` (vide à l'installation ; comptes ajoutés à la main dans l'appli) |
 | Sauvegardes boîte | `~/Backups/mailcraft/mailbox-*.tgz` (5 dernières) |
 | Journaux de synchro | `~/.local/state/mailcraft-vip-sync/*.log`, rapports `~/Nextcloud/Claude/system-reports/mailcraft-sync-*.md` |
 | Cadrage webmail | `docs/vip-webmail.md` · fonctions VIP pour l'utilisateur : `README-VIP.md` |
@@ -75,7 +75,8 @@ nouveaux champs de structs upstream à compléter dans les initialisations de te
 
 ## Comptes et secrets
 
-- contact@artisan-digital.eu (IMAP/SMTP o2switch) ; mot de passe dans le trousseau du système.
+- Aucun compte préconfiguré : l'installation ne crée ni n'importe de boîte. contact@artisan-digital.eu
+  (IMAP/SMTP o2switch) est ajouté à la main par son utilisatrice ; mot de passe dans le trousseau du système.
 - Signatures HTML Brand Kit posées le 30/10 : « Arnaud — Artisan Digital » (défaut) et
   « Thanh — Artisan Digital » (script `~/.cache/mc-sig/apply_sig.py`, source https://branding.artisan-digital.eu).
 - Connexion Google (Gmail) : `MAILCRAFT_GOOGLE_CLIENT_ID/SECRET` dans `.env` du dépôt ou

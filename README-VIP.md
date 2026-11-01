@@ -72,6 +72,9 @@ La réponse automatique part une seule fois par expéditeur. Elle ne part jamais
 
 ## Reprendre les données de VIP Mail
 
+Facultatif. MailCraft s'installe sans aucune boîte : chaque utilisateur ajoute lui-même son compte
+dans l'appli. N'utiliser l'import que pour reprendre volontairement les données de VIP Mail.
+
 ```sh
 python3 -I ~/Nextcloud/Claude/migration/vipmail/import-vipmail.py
 ```
