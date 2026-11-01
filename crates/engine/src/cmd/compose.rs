@@ -941,11 +941,13 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
     match c.format {
         BodyFormat::Html => {
             let cid = |p: &Picture| signature_cid(p, message_id);
-            // An HTML signature goes out as the owner wrote it, cleaned, unless they edited it here.
+            // An HTML signature goes out as the owner wrote it, cleaned, unless they edited it
+            // here; its own pictures under the names they have in this message.
             let own = c.signature.as_ref().and_then(|i| i.html.as_deref()).filter(|_| signature_unedited(c));
+            let own = own.map(|h| own_pictures_named(&mailcraft_html::quotable(h), c, message_id));
             let html = [
                 before.as_ref().map(|t| to_html_with(t, &img)),
-                Some(own.map_or_else(|| mailcraft_mime::rich::signature_html(&sig, &cid), mailcraft_html::quotable)),
+                Some(own.unwrap_or_else(|| mailcraft_mime::rich::signature_html(&sig, &cid))),
                 after.as_ref().map(|t| to_html_with(t, &img)),
             ];
             Body { text: plain, html: Some(mailcraft_mime::rich::document(&html.into_iter().flatten().collect::<String>(), quote_html)) }
@@ -955,11 +957,32 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
 }
 
 /// The text before the signature, the signature as it goes out (only the pictures its text
-/// still shows), and the text after it; `None` when the message has no signature.
+/// still shows; for an HTML signature that goes out as written, every picture of its own), and
+/// the text after it; `None` when the message has no signature.
 fn sent_signature(c: &Compose) -> Option<(Option<RichText>, Signature, Option<RichText>)> {
     let inserted = c.signature.as_ref()?;
     let (before, sig, after) = c.body.text().around_signature()?;
-    Some((before, Signature::assemble(&inserted.name, sig, &inserted.pictures, inserted.layout), after))
+    let mut sent = Signature::assemble(&inserted.name, sig, &inserted.pictures, inserted.layout);
+    if inserted.html.is_some() && signature_unedited(c) {
+        sent = sent.with_every_picture(&inserted.pictures);
+    }
+    Some((before, sent, after))
+}
+
+/// An HTML signature's own pictures, which it names by their `cid:` of its own
+/// ([`Signature::picture_cid`]), named as this message's parts call them.
+fn own_pictures_named(html: &str, c: &Compose, message_id: &str) -> String {
+    let Some(inserted) = c.signature.as_ref() else { return html.to_string() };
+    let mut out = html.to_string();
+    for p in &inserted.pictures {
+        let own = format!("cid:{}", Signature::picture_cid(p.id));
+        let sent = format!("cid:{}", signature_cid(p, message_id));
+        // (Whole names only: `sig-picture-1` is not the start of `sig-picture-12`.)
+        for quote in ['"', '\''] {
+            out = out.replace(&format!("{own}{quote}"), &format!("{sent}{quote}"));
+        }
+    }
+    out
 }
 
 /// A signature picture's Content-ID: unique to the message, and naming nothing of the owner.

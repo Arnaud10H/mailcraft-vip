@@ -119,16 +119,22 @@ fn new_words_let_an_html_signature_go_and_the_same_words_keep_it() {
 }
 
 #[test]
-fn an_html_signature_has_no_pictures_of_its_own_and_stays_in_its_cap() {
+fn an_html_signature_keeps_its_own_pictures_by_name_and_stays_in_its_cap() {
     let mut sig = Signature::plain_text("Work", "Avery Quinn");
-    sig.add_picture("logo.png", png(10), None, None).unwrap();
-    // Its pictures would be lost: refused, and nothing changes.
-    assert!(sig.set_html(Some("<b>Avery</b>".into())).is_err());
-    assert!(sig.html().is_none() && sig.pictures().len() == 1);
+    let id = sig.add_picture("logo.png", png(10), None, None).unwrap();
+    // Its pictures stay, named for the HTML to show them by.
+    sig.set_html(Some(format!("<img src=\"cid:{}\"><b>Avery</b>", Signature::picture_cid(id)))).unwrap();
+    assert!(sig.html().is_some() && sig.pictures().len() == 1);
+    assert_eq!(Signature::picture_of_cid(&Signature::picture_cid(id)), Some(id));
+    assert_eq!(
+        (Signature::picture_of_cid("sig-picture-"), Signature::picture_of_cid("pic-1"), Signature::picture_of_cid(" sig-picture-7 ")),
+        (None, None, Some(7))
+    );
     let mut sig = Signature::plain_text("Work", "Avery Quinn");
     assert!(sig.set_html(Some("x".repeat(MAX_HTML + 1))).is_err());
     sig.set_html(Some("<b>Avery</b>".into())).unwrap();
-    assert!(sig.add_picture("logo.png", png(10), None, None).is_err());
+    sig.add_picture("logo.png", png(10), None, None).unwrap();
+    assert_eq!(sig.pictures().len(), 1);
     // A file with too much HTML opens as its text alone.
     let json = serde_json::json!({"name": "S", "text": "Avery", "html": "x".repeat(MAX_HTML + 1)});
     let opened: Signature = serde_json::from_value(json).unwrap();

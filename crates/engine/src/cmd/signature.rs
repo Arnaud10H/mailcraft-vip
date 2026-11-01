@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             r#"{"name": string, "details": {"name"?, "title"?, "organisation"?, "phone"?, "mobile"?, "email"?, "website"?, "address"?: string}, "restart"?: bool (lay it out again after it was edited by hand)} — lays the signature out from the details (the logo is its first picture); after a hand edit only keeps them, unless restart"#,
         ),
         CommandSpec::new("signature.html", "HTML Signature", "File › Signatures", html).params(
-            r#"{"name"?: string (default: the open one), "html": string (the signature's own HTML, at most 64 KB; sent as written once cleaned of what runs or tracks; pictures only from their web address) | null (rich text again, of what the HTML made)} — makes it an HTML signature, or a rich one again"#,
+            r#"{"name"?: string (default: the open one), "html": string (the signature's own HTML, at most 64 KB; sent as written once cleaned of what runs or tracks; a picture written into it (`<img src="data:image/…;base64,…">`, PNG, JPEG or GIF) becomes the signature's own, sent with each message as a part of its own and shown in the message being written; other pictures only from their web address) | null (rich text again, of what the HTML made)} — makes it an HTML signature, or a rich one again"#,
         ),
         CommandSpec::new("signature.open", "Edit Signature", "File › Signatures", open)
             .pure()
@@ -371,12 +371,20 @@ fn html(s: &mut Session, v: &Value) -> CmdResult {
     // Changed whole or not at all.
     let sig = named(s, v)?;
     let mut changed = sig.clone();
+    // A picture written into the HTML becomes the signature's own, which the HTML then shows
+    // by its `cid:` name; the message carries it as a part of its own.
+    let html = match html {
+        Some(h) => Some(adopt_data_pictures(&mut changed, &h)?),
+        None => None,
+    };
     changed.set_html(html.clone()).map_err(|e| fail(e.to_string()))?;
-    // What a message being written shows of it: its words and look as rich text, or for HTML
-    // with no words (a logo alone) its pictures' descriptions.
+    // What a message being written shows of it: its words and look as rich text, with the
+    // signature's own pictures where the HTML has them; or for HTML with no words (a logo alone)
+    // its pictures' descriptions.
     let stand_in = html.as_deref().map(|h| {
-        let rich = mailcraft_mime::rich::from_html(h);
-        if rich.to_plain().trim().is_empty() { RichText::from_plain(mailcraft_html::to_text(h).trim()) } else { rich }
+        let mut claim = |img: &mailcraft_mime::rich::ImgRef| Signature::picture_of_cid(&img.cid).filter(|id| changed.picture(*id).is_some());
+        let rich = mailcraft_mime::rich::from_html_with_pictures(h, &mut claim);
+        if rich.to_plain().trim().is_empty() && rich.pictures().is_empty() { RichText::from_plain(mailcraft_html::to_text(h).trim()) } else { rich }
     });
     if let Some(text) = &stand_in {
         // New words let the HTML go, so it is set again (checked above, while the pictures were there).
@@ -388,6 +396,44 @@ fn html(s: &mut Session, v: &Value) -> CmdResult {
         e.body.replace(text).map_err(|err| fail(err.to_string()))?;
     }
     done()
+}
+
+/// `html` with each picture written into it (`src="data:image/…;base64,…"`) taken into `sig` as
+/// a picture of its own and named by its `cid:` in its place. A picture the signature can't take
+/// (too large, too many, not a PNG, JPEG or GIF) is the error. Pictures the signature had from an
+/// earlier HTML and that this one no longer names go when the stand-in text is set.
+fn adopt_data_pictures(sig: &mut Signature, html: &str) -> Result<String, CmdError> {
+    use mailcraft_charset::base64::STANDARD;
+    let lower = html.to_ascii_lowercase();
+    let (mut out, mut at, mut count) = (String::with_capacity(html.len()), 0usize, 0u32);
+    while let Some(start) = lower.get(at..).and_then(|rest| rest.find("data:image/")).map(|rel| at + rel) {
+        // The value's quote before it, and after it: `src="data:…"` or `src='data:…'`.
+        let quote = html.as_bytes().get(start.wrapping_sub(1)).copied().filter(|b| matches!(b, b'"' | b'\''));
+        let end = quote.and_then(|q| html.get(start..).and_then(|rest| rest.find(q as char)).map(|rel| start + rel));
+        let Some(end) = end else {
+            out.push_str(html.get(at..start + 11).unwrap_or(""));
+            at = start + 11;
+            continue;
+        };
+        let value = html.get(start..end).unwrap_or("");
+        let Some((head, encoded)) = value.split_once(',').filter(|(head, _)| head.to_ascii_lowercase().contains(";base64")) else {
+            out.push_str(html.get(at..end).unwrap_or(""));
+            at = end;
+            continue;
+        };
+        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes = STANDARD.decode(cleaned.as_bytes()).map_err(|_| fail("a picture written into the signature's HTML isn't base64"))?;
+        count = count.saturating_add(1);
+        let extension = head.trim_start_matches("data:image/").split(';').next().unwrap_or("png").to_ascii_lowercase();
+        let name = format!("signature-{count}.{}", if extension == "jpeg" { "jpg".to_string() } else { extension });
+        let id = sig.add_picture(&name, bytes, Some(""), None).map_err(|e| fail(e.to_string()))?;
+        out.push_str(html.get(at..start).unwrap_or(""));
+        out.push_str("cid:");
+        out.push_str(&Signature::picture_cid(id));
+        at = end;
+    }
+    out.push_str(html.get(at..).unwrap_or(""));
+    Ok(out)
 }
 
 fn layout(s: &mut Session, v: &Value) -> CmdResult {

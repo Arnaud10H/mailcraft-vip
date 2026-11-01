@@ -401,10 +401,11 @@ fn an_html_signature_is_rich_text_again_with_its_words_and_refuses_what_it_would
     run(&mut s, "signature.html", json!({"name": "Logo", "html": null}));
     let sig = s.mailbox.signature("Logo").unwrap();
     assert!(sig.html().is_none() && sig.plain() == "[Lumen Studio]");
-    // One with pictures would lose them; too much HTML is refused; nothing changes.
+    // One with a picture of its own keeps the picture only while the HTML shows it: HTML that
+    // doesn't lets it go, as new words do. Too much HTML is refused; nothing changes.
     logo(&mut s);
-    assert!(s.run("signature.html", &json!({"name": "Logo", "html": "<b>Avery</b>"})).is_err());
-    assert!(s.mailbox.signature("Logo").unwrap().html().is_none() && s.mailbox.signature("Logo").unwrap().pictures().len() == 1);
+    run(&mut s, "signature.html", json!({"name": "Logo", "html": "<b>Avery</b>"}));
+    assert!(s.mailbox.signature("Logo").unwrap().html().is_some() && s.mailbox.signature("Logo").unwrap().pictures().is_empty());
     let big = "x".repeat(mailcraft_model::signature::MAX_HTML + 1);
     assert!(s.run("signature.html", &json!({"name": "Standard", "html": big})).is_err());
     assert!(s.run("signature.html", &json!({"name": "Standard", "html": 7})).is_err());
@@ -451,4 +452,53 @@ fn new_words_for_an_html_signature_make_it_rich_text_and_the_message_says_them_a
     run(&mut s, "signature.html", json!({"name": "Generated", "html": GENERATED}));
     run(&mut s, "signature.save", json!({}));
     assert_eq!(s.mailbox.signature("Generated").unwrap().html(), Some(GENERATED));
+}
+
+/// A signature laid out by a generator with its logo written into it (`data:`), as a signature
+/// pasted from a brand kit comes.
+fn embedded() -> String {
+    format!(
+        r#"<table cellpadding="0"><tr><td><img src="data:image/png;base64,{}" width="120" alt="Lumen Studio"></td><td><b>Avery Quinn</b><br>Founder</td></tr></table>"#,
+        png()
+    )
+}
+
+#[test]
+fn a_picture_written_into_an_html_signature_becomes_its_own_and_goes_with_every_message() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Brand", "text": "", "default": true}));
+    run(&mut s, "signature.html", json!({"name": "Brand", "html": embedded()}));
+    let sig = s.mailbox.signature("Brand").unwrap().clone();
+    // The picture is the signature's own, and the HTML shows it by its name.
+    assert_eq!(sig.pictures().len(), 1);
+    let picture = &sig.pictures()[0];
+    assert_eq!((picture.mime.as_str(), picture.name.as_str()), ("image/png", "signature-1.png"));
+    let html = sig.html().unwrap();
+    assert!(
+        html.contains(&format!("src=\"cid:{}\"", mailcraft_model::signature::Signature::picture_cid(picture.id))) && !html.contains("data:"),
+        "{html}"
+    );
+    // A message being written shows the words and the picture.
+    assert_eq!(sig.body().pictures(), vec![picture.id]);
+    assert!(sig.plain().contains("Avery Quinn"), "{:?}", sig.plain());
+    // Sent: the HTML as written, the picture a part of the message under a name of the message's own.
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Plan", "body": "Hello"}));
+    run(&mut s, "compose.formatHtml", json!({}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let m = s.mailbox.message(id).unwrap();
+    let html = m.body.html.clone().unwrap();
+    assert_eq!(m.attachments.len(), 1);
+    let part = &m.attachments[0];
+    assert!(part.inline && part.content_id.starts_with("sig-1.") && part.mime == "image/png", "{part:?}");
+    assert!(html.contains(&format!("src=\"cid:{}\"", part.content_id)) && html.contains("<table") && html.contains("Founder"), "{html}");
+    assert!(!html.contains("sig-picture-"), "{html}");
+    // The same signature set again from the same HTML: the picture once, not twice.
+    run(&mut s, "signature.html", json!({"name": "Brand", "html": embedded()}));
+    assert_eq!(s.mailbox.signature("Brand").unwrap().pictures().len(), 1);
+    // Junk in the picture is refused, and nothing changes.
+    let junk = r#"<img src="data:image/png;base64,!!!!">"#;
+    assert!(s.run("signature.html", &json!({"name": "Brand", "html": junk})).is_err());
+    let not_a_picture = format!(r#"<img src="data:image/png;base64,{}">"#, mailcraft_charset::base64::STANDARD.encode(b"hello"));
+    assert!(s.run("signature.html", &json!({"name": "Brand", "html": not_a_picture})).is_err());
+    assert_eq!(s.mailbox.signature("Brand").unwrap().pictures().len(), 1);
 }

@@ -16,8 +16,10 @@
 //!
 //! An HTML signature also keeps the owner's own HTML ([`Signature::html`]), at most [`MAX_HTML`]
 //! bytes, as they wrote it: it is cleaned when a message goes out, never here. Its text is then a
-//! stand-in, what a message being written shows of it. It has no pictures of its own: those it
-//! shows are on the web, and the recipient's program decides whether to load them.
+//! stand-in, what a message being written shows of it. A picture written into the HTML becomes
+//! one of the signature's own, which the HTML shows by its `cid:` ([`Signature::picture_cid`]) and
+//! every message carries as a part of its own; any other picture it shows is on the web, and the
+//! recipient's program decides whether to load it.
 
 use std::sync::Arc;
 
@@ -28,6 +30,8 @@ use crate::rich::{Paragraph, RichText, Run, Style, safe_link};
 
 /// Most bytes one picture may have.
 pub const MAX_PICTURE_BYTES: usize = 256 * 1024;
+/// What the `cid:` of an HTML signature's own picture starts with ([`Signature::picture_cid`]).
+pub const PICTURE_CID_PREFIX: &str = "sig-picture-";
 /// Most bytes a signature's pictures may have together.
 pub const MAX_PICTURES_BYTES: usize = 512 * 1024;
 /// Most pictures one signature holds.
@@ -360,6 +364,19 @@ impl Signature {
         &self.pictures
     }
 
+    /// The signature with every one of `pictures` that it can take, whether or not its text
+    /// shows it: for an HTML signature, whose own HTML shows them.
+    pub fn with_every_picture(mut self, pictures: &[Picture]) -> Signature {
+        for p in pictures {
+            if self.picture(p.id).is_none()
+                && let Ok(mime) = self.check(&p.data, None)
+            {
+                self.pictures.push(Picture { mime: mime.to_string(), ..p.clone() });
+            }
+        }
+        self
+    }
+
     pub fn picture(&self, id: u32) -> Option<&Picture> {
         self.pictures.iter().find(|p| p.id == id)
     }
@@ -370,21 +387,29 @@ impl Signature {
     }
 
     /// Make it an HTML signature of `html` (its text is then a stand-in for it, set apart), or
-    /// with `None` a rich one again, of its text. Refused over [`MAX_HTML`], and while it has
-    /// pictures, which the HTML would lose.
+    /// with `None` a rich one again, of its text. Refused over [`MAX_HTML`]. The HTML shows a
+    /// picture of the signature's own as `cid:` and [`Signature::picture_cid`]; it keeps the
+    /// pictures it has either way.
     pub fn set_html(&mut self, html: Option<String>) -> Result<(), ModelError> {
-        if let Some(h) = &html {
-            if h.len() > MAX_HTML {
-                return Err(ModelError::Invalid(format!("an HTML signature is at most {} KB", MAX_HTML / 1024)));
-            }
-            if !self.pictures.is_empty() {
-                return Err(ModelError::Invalid(
-                    "an HTML signature shows pictures from their web address only: remove this signature's pictures first".into(),
-                ));
-            }
+        if let Some(h) = &html
+            && h.len() > MAX_HTML
+        {
+            return Err(ModelError::Invalid(format!("an HTML signature is at most {} KB", MAX_HTML / 1024)));
         }
         self.html = html;
         Ok(())
+    }
+
+    /// What an HTML signature calls its own picture `id` in its `<img src="cid:…">`: a name that
+    /// is the same in every message, which the message's own Content-ID takes the place of when
+    /// the message is sent.
+    pub fn picture_cid(id: u32) -> String {
+        format!("{PICTURE_CID_PREFIX}{id}")
+    }
+
+    /// The picture a `cid:` of an HTML signature names ([`Signature::picture_cid`]), when it is one.
+    pub fn picture_of_cid(cid: &str) -> Option<u32> {
+        cid.trim().strip_prefix(PICTURE_CID_PREFIX)?.parse().ok()
     }
 
     /// Replace the text. Pictures it no longer holds are let go; a picture run naming a picture
@@ -463,9 +488,6 @@ impl Signature {
 
     /// Add a picture at text position `at` (the end when it is past it): its id.
     pub fn add_picture(&mut self, name: &str, data: Vec<u8>, alt: Option<&str>, at: Option<usize>) -> Result<u32, ModelError> {
-        if self.html.is_some() {
-            return Err(ModelError::Invalid("an HTML signature shows pictures from their web address: switch it to rich text to add one".into()));
-        }
         let mime = self.check(&data, None)?;
         let id = self.pictures.iter().map(|p| p.id).max().map_or(1, |n| n.saturating_add(1));
         let name: String = name.chars().filter(|c| !c.is_control()).take(255).collect();

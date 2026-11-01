@@ -8880,9 +8880,8 @@ msgstr "Verzonden items"
 
 #. interface
 #: crates/ui-egui/src/signatures.rs
-#, fuzzy
-msgid "Sent as written, without anything that runs or tracks. Pictures come from their web address, and recipients' programs decide whether to load them. A message you write shows a simpler copy of this signature; if you edit it there, that copy is sent instead."
-msgstr "Verzonden zoals geschreven, zonder iets dat wordt uitgevoerd of u volgt. Afbeeldingen komen van hun webadres, en de programma's van de ontvangers bepalen of ze worden geladen. Een bericht dat u schrijft, toont een eenvoudigere kopie van deze handtekening; als u die daar bewerkt, wordt die kopie in plaats daarvan verzonden."
+msgid "Sent as written, without anything that runs or tracks. A picture written into the HTML (data:) becomes the signature's own and goes with every message; other pictures come from their web address, and recipients' programs decide whether to load them. A message you write shows a simpler copy of this signature; if you edit it there, that copy is sent instead."
+msgstr ""
 
 #. name
 #: crates/ui-egui/src/forms.rs
@@ -12739,6 +12738,11 @@ msgid "a picture in a message is at most {mb} MB"
 msgstr "een afbeelding in een bericht is hoogstens {mb} MB"
 
 #. what a command says
+#: crates/engine/src/cmd/signature.rs
+msgid "a picture written into the signature's HTML isn't base64"
+msgstr ""
+
+#. what a command says
 #: crates/engine/src/cmd/rules.rs
 #, fuzzy
 msgid "a rule can't move mail to an Outbox: that would send it"
@@ -12814,18 +12818,6 @@ msgstr "voeg minstens één ontvanger toe"
 #: crates/engine/src/cmd/account.rs
 msgid "an Exchange server account's server, address and user name can't be changed once its mail is here: remove it and add the other one"
 msgstr ""
-
-#. what a command says
-#: crates/model/src/signature.rs
-#, fuzzy
-msgid "an HTML signature shows pictures from their web address only: remove this signature's pictures first"
-msgstr "een HTML-handtekening toont alleen afbeeldingen vanaf hun webadres: verwijder eerst de afbeeldingen van deze handtekening"
-
-#. what a command says
-#: crates/model/src/signature.rs
-#, fuzzy
-msgid "an HTML signature shows pictures from their web address: switch it to rich text to add one"
-msgstr "een HTML-handtekening toont afbeeldingen vanaf hun webadres: schakel over naar tekst met opmaak om er een toe te voegen"
 
 #. what a command says
 #: crates/engine/src/cmd/account.rs
@@ -15318,6 +15310,18 @@ msgstr "„{subject}” was te groot om te downloaden: alleen de koptekst is hie
 #, fuzzy
 msgid "“{subject}” wasn't found on its server, so it can't be forwarded as an attachment"
 msgstr "„{subject}” is niet op de server gevonden, dus het kan niet als bijlage worden doorgestuurd"
+
+#, fuzzy
+#~ msgid "Sent as written, without anything that runs or tracks. Pictures come from their web address, and recipients' programs decide whether to load them. A message you write shows a simpler copy of this signature; if you edit it there, that copy is sent instead."
+#~ msgstr "Verzonden zoals geschreven, zonder iets dat wordt uitgevoerd of u volgt. Afbeeldingen komen van hun webadres, en de programma's van de ontvangers bepalen of ze worden geladen. Een bericht dat u schrijft, toont een eenvoudigere kopie van deze handtekening; als u die daar bewerkt, wordt die kopie in plaats daarvan verzonden."
+
+#, fuzzy
+#~ msgid "an HTML signature shows pictures from their web address only: remove this signature's pictures first"
+#~ msgstr "een HTML-handtekening toont alleen afbeeldingen vanaf hun webadres: verwijder eerst de afbeeldingen van deze handtekening"
+
+#, fuzzy
+#~ msgid "an HTML signature shows pictures from their web address: switch it to rich text to add one"
+#~ msgstr "een HTML-handtekening toont afbeeldingen vanaf hun webadres: schakel over naar tekst met opmaak om er een toe te voegen"
 
 #, fuzzy
 #~ msgid "MailCraft doesn't send mail from a JMAP account yet"
