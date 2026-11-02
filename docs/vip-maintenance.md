@@ -83,7 +83,12 @@ nouveaux champs de structs upstream à compléter dans les initialisations de te
 ## Autres postes
 
 - Edouard (Mac) : brief `~/Nextcloud/Claude/migration/BRIEF-Edouard-MailCraft-vip-ucs-20261030.md`.
-- update-arch (JeanClaude) : met MailCraft à jour **avant** les paquets système, depuis la branche courante.
+- **Tout poste Linux (JeanClaude, Bernard…)** : `packaging/vip-update.sh` — clone s'il le faut (`~/Code/mailcraft-vip`),
+  fast-forward de `vip-ucs` depuis Forgejo, compile avec l'identifiant Google s'il est déposé, sauvegarde la boîte,
+  installe (`vip-install.sh`), relance l'app ; `--check` dit seulement s'il y a du nouveau, `--no-restart` pour
+  update-arch/cron, `--force` pour réinstaller. Poste vierge :
+  `bash <(curl -fsSL https://git.artisan-digital.eu/arnaud/mailcraft-vip/raw/branch/vip-ucs/packaging/vip-update.sh)`.
+- update-arch (JeanClaude) : appelle `~/Code/mailcraft-vip/packaging/vip-update.sh --no-restart` **avant** les paquets système.
 
 ## Automatisation
 
