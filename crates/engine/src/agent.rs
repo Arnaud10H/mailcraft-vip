@@ -469,6 +469,9 @@ const SETTINGS: &[&str] = &[
 ];
 
 const NEVER: &[&str] = &[
+    // Writes many files into a folder of the computer's: agents save one at a time
+    // (mail.saveAttachment), into the folder `mcp --files` gives them.
+    "mail.saveAllAttachments",
     // The host's side of a synchronisation: what came from a server is the host's to say.
     "sync.request",
     "sync.apply",
