@@ -502,3 +502,55 @@ fn a_picture_written_into_an_html_signature_becomes_its_own_and_goes_with_every_
     assert!(s.run("signature.html", &json!({"name": "Brand", "html": not_a_picture})).is_err());
     assert_eq!(s.mailbox.signature("Brand").unwrap().pictures().len(), 1);
 }
+
+/// The HTML signature as an export from a signature generator writes it: a table, the logo on the
+/// web on the left, the words on the right.
+const LAID_OUT: &str = r#"<table cellpadding="0"><tr><td><img src="https://brand.example/logo.png" width="120" alt="Lumen"></td><td style="border-left:3px solid #1D71B8"><b>Avery Quinn</b><br>Founder</td></tr></table>"#;
+
+/// What the message sent of `id` carries as HTML.
+fn sent_html(s: &Session, id: u64) -> String {
+    s.mailbox.message(id).unwrap().body.html.clone().unwrap()
+}
+
+#[test]
+fn an_html_signature_goes_out_whole_whatever_is_written_around_it() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Brand", "text": "", "default": true}));
+    run(&mut s, "signature.html", json!({"name": "Brand", "html": LAID_OUT}));
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Plan"}));
+    // Words typed before it, the format switched back and forth: it still goes out as written.
+    run(&mut s, "compose.select", json!({"from": 0}));
+    run(&mut s, "compose.type", json!({"text": "Hello Maya, see below."}));
+    run(&mut s, "compose.formatPlain", json!({}));
+    run(&mut s, "compose.formatHtml", json!({}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let html = sent_html(&s, id);
+    assert!(html.contains("border-left:3px solid #1D71B8") && html.contains("https://brand.example/logo.png") && html.contains("Hello Maya"), "{html}");
+}
+
+#[test]
+fn an_html_signature_comes_back_whole_when_its_draft_opens_again() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Brand", "text": "", "default": true}));
+    run(&mut s, "signature.html", json!({"name": "Brand", "html": embedded_beside(LAID_OUT)}));
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Plan", "body": "Hello"}));
+    let draft = run(&mut s, "compose.saveDraft", json!({}))["draft"].as_u64().unwrap();
+    run(&mut s, "compose.close", json!({}));
+    run(&mut s, "mail.editDraft", json!({"id": draft}));
+    // Edited before the signature after it came back: the signature still goes out as written,
+    // its picture with it.
+    run(&mut s, "compose.select", json!({"from": 5}));
+    run(&mut s, "compose.type", json!({"text": " Maya"}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let html = sent_html(&s, id);
+    assert!(html.contains("border-left:3px solid #1D71B8") && html.contains("Hello Maya"), "{html}");
+    let m = s.mailbox.message(id).unwrap();
+    let inline: Vec<_> = m.attachments.iter().filter(|a| a.inline).collect();
+    assert_eq!(inline.len(), 1, "{:?}", m.attachments);
+    assert!(html.contains(&format!("cid:{}", inline[0].content_id)), "{html}");
+}
+
+/// `html` with the logo written into it as well.
+fn embedded_beside(html: &str) -> String {
+    format!(r#"<img src="data:image/png;base64,{}" alt="mark">{html}"#, png())
+}

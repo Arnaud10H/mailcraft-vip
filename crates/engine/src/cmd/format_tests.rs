@@ -174,7 +174,8 @@ fn a_formatted_draft_reopens_formatted() {
     let written = compose(&s).body.text().clone();
     run(&mut s, "compose.close", json!({}));
     run(&mut s, "mail.editDraft", json!({"id": d}));
-    assert_eq!(compose(&s).body.text(), &unmarked(&written));
+    // The signature comes back as the signature.
+    assert_eq!(compose(&s).body.text(), &written);
     assert_eq!(compose(&s).format, crate::BodyFormat::Html);
     // A draft saved before rich text (plain text only) opens as plain text.
     s.mailbox.message_mut(d).unwrap().body = mailcraft_model::Body { text: "Old\ndraft".into(), html: None };

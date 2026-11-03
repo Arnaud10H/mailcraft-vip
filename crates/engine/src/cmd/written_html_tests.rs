@@ -76,3 +76,40 @@ fn null_lets_the_html_go_and_junk_changes_nothing() {
     assert!(s.compose.as_ref().unwrap().written.is_none());
     assert!(s.run("compose.html", &json!({})).is_err());
 }
+
+#[test]
+fn its_draft_opens_again_as_written() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Work", "text": "Avery Quinn", "default": true}));
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Offre"}));
+    run(&mut s, "compose.html", json!({"html": newsletter()}));
+    let draft = run(&mut s, "compose.saveDraft", json!({}))["draft"].as_u64().unwrap();
+    run(&mut s, "compose.close", json!({}));
+    run(&mut s, "mail.editDraft", json!({"id": draft}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let m = s.mailbox.message(id).unwrap();
+    let html = m.body.html.clone().unwrap();
+    assert!(html.contains("#293c67") && html.contains("<table") && html.contains("Avery Quinn"), "{html}");
+    assert!(!html.contains(crate::WRITTEN_PICTURE_CID) && html.matches("<body").count() == 1, "{html}");
+    let inline: Vec<_> = m.attachments.iter().filter(|a| a.inline).collect();
+    assert_eq!(inline.len(), 1, "{:?}", m.attachments);
+    assert!(html.contains(&format!("cid:{}", inline[0].content_id)), "{html}");
+}
+
+#[test]
+fn html_that_ends_with_the_signature_takes_its_place_and_pictures_keep_their_width() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Work", "text": "Avery Quinn\nFounder", "default": true}));
+    run(&mut s, "mail.new", json!({"subject": "Offre"}));
+    let png = mailcraft_charset::base64::STANDARD.encode(b"\x89PNG\r\n\x1a\nIHDR....");
+    let html = format!(r#"<p>Hello</p><table><tr><td><img src="data:image/png;base64,{png}" width="15"></td><td><b>Avery Quinn</b><br>Founder</td></tr></table>"#);
+    run(&mut s, "compose.html", json!({"html": html}));
+    let c = s.compose.as_ref().unwrap();
+    assert!(c.signature.is_none() && c.body.text().signature().is_none());
+    assert_eq!(c.body.text().text().matches("Avery Quinn").count(), 1);
+    assert_eq!(c.pictures[0].width, Some(15));
+    // Asked to, it keeps it.
+    run(&mut s, "mail.new", json!({"subject": "Offre"}));
+    run(&mut s, "compose.html", json!({"html": html, "signature": true}));
+    assert!(s.compose.as_ref().unwrap().body.text().signature().is_some());
+}

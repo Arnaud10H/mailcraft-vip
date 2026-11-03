@@ -381,11 +381,20 @@ fn html(s: &mut Session, v: &Value) -> CmdResult {
     // What a message being written shows of it: its words and look as rich text, with the
     // signature's own pictures where the HTML has them; or for HTML with no words (a logo alone)
     // its pictures' descriptions.
+    let mut widths: Vec<(u32, Option<u16>)> = Vec::new();
     let stand_in = html.as_deref().map(|h| {
-        let mut claim = |img: &mailcraft_mime::rich::ImgRef| Signature::picture_of_cid(&img.cid).filter(|id| changed.picture(*id).is_some());
+        let mut claim = |img: &mailcraft_mime::rich::ImgRef| {
+            let id = Signature::picture_of_cid(&img.cid).filter(|id| changed.picture(*id).is_some())?;
+            widths.push((id, img.width));
+            Some(id)
+        };
         let rich = mailcraft_mime::rich::from_html_with_pictures(h, &mut claim);
         if rich.to_plain().trim().is_empty() && rich.pictures().is_empty() { RichText::from_plain(mailcraft_html::to_text(h).trim()) } else { rich }
     });
+    // Each picture shown at the width the HTML gives it.
+    for (id, width) in widths.into_iter().filter_map(|(id, w)| w.map(|w| (id, w))) {
+        changed.set_picture(id, Some(Some(width)), None).map_err(|e| fail(e.to_string()))?;
+    }
     if let Some(text) = &stand_in {
         // New words let the HTML go, so it is set again (checked above, while the pictures were there).
         changed.set_body(text.clone()).map_err(|e| fail(e.to_string()))?;
