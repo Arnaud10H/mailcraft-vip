@@ -1046,10 +1046,18 @@ fn low_importance(s: &mut Session, _: &Value) -> CmdResult {
 pub fn preview(s: &Session) -> Option<Message> {
     let c = s.compose.as_ref()?;
     let html_signature = c.signature.as_ref().is_some_and(|i| i.html.is_some()) && signature_unedited(c);
-    if c.format != BodyFormat::Html || !(html_signature || written_unedited(c).is_some()) {
+    // HTML of the owner's own laid out (a table, a picture): text alone looks the same in the copy.
+    let laid_out = written_unedited(c).is_some_and(|h| {
+        let lower = h.to_ascii_lowercase();
+        lower.contains("<table") || lower.contains("<img")
+    });
+    if c.format != BodyFormat::Html || !(html_signature || laid_out) {
         return None;
     }
-    build_as(s, c, false, Some("preview@mailcraft.invalid")).ok()
+    // The owner's part only: the original quoted below is shown as it is, and its pictures on the
+    // web are fetched by the owner's say-so only.
+    let own = Compose { quote: None, ..c.clone() };
+    build_as(s, &own, false, Some("preview@mailcraft.invalid")).ok()
 }
 
 fn build_as(s: &Session, c: &Compose, strict: bool, message_id: Option<&str>) -> Result<Message, CmdError> {
