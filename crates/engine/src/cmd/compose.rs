@@ -45,6 +45,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(r#"{"path": string} | {"name": string, "data": base64}, "mime"?: string"#)
             .when(needs_compose),
         CommandSpec::new("compose.removeAttachment", "Remove Attachment", "Message › Include", remove_attachment).pure().params(r#"{"index": number}"#).when(needs_compose),
+        CommandSpec::new("compose.signatureAsText", "Signature as Text", "Message › Include", signature_as_text)
+            .pure()
+            .params("{} — an HTML signature shown whole becomes text of the message, to edit (sent as rich text then)")
+            .when(needs_compose),
+        CommandSpec::new("compose.removeSignature", "Remove Signature", "Message › Include", remove_signature).pure().when(needs_compose),
         CommandSpec::new("compose.html", "HTML as Written", "Message › Include", written)
             .pure()
             .params(r#"{"html": string (a whole message written in HTML elsewhere: tables, colours, pictures; a picture written into it as `data:image/…;base64,…`, PNG, JPEG or GIF, goes with the message as a part of its own, other pictures stay on the web) | null (the text as it stands, sent as rich text again), "path"?: string (an .html file, in place of `html`), "signature"?: bool (keep the signature put in; by default it goes when the HTML already has its words)} — the message's text before the signature becomes that HTML: the window shows a simpler copy, and the HTML is sent as written, without anything that runs or tracks, until the copy is edited"#)
@@ -111,6 +116,19 @@ fn chosen_signature(s: &Session, account: Id, name: Option<&str>, reply: bool) -
 /// Put `sig` in the message as its signature (in place of the one there, else at `at`), or take
 /// it out; and remember what went in, to tell later whether the owner has edited it.
 fn put_signature(c: &mut Compose, sig: Option<&Signature>, at: usize) -> Result<(), CmdError> {
+    // An HTML signature is shown whole below the text, as it goes out.
+    if let Some(sig) = sig.filter(|sig| sig.html().is_some()) {
+        c.body.put_signature(None, at).map_err(|e| fail(e.to_string()))?;
+        c.signature = Some(InsertedSignature {
+            name: sig.name.clone(),
+            layout: sig.layout,
+            pictures: sig.pictures().to_vec(),
+            text: sig.body().clone(),
+            html: sig.html().map(str::to_string),
+            block: true,
+        });
+        return Ok(());
+    }
     c.body.put_signature(sig.map(Signature::body), at).map_err(|e| fail(e.to_string()))?;
     c.signature = match (sig, c.body.text().signature()) {
         (Some(sig), Some(text)) => Some(InsertedSignature {
@@ -119,6 +137,7 @@ fn put_signature(c: &mut Compose, sig: Option<&Signature>, at: usize) -> Result<
             pictures: sig.pictures().to_vec(),
             text,
             html: sig.html().map(str::to_string),
+            block: false,
         }),
         _ => None,
     };
@@ -134,7 +153,12 @@ fn start_with(c: &mut Compose, sig: &Signature, at: usize) -> Result<(), CmdErro
 
 /// Whether the signature in the message is still the one that went in.
 fn signature_unedited(c: &Compose) -> bool {
-    c.signature.as_ref().is_some_and(|inserted| c.body.text().signature().as_ref() == Some(&inserted.text))
+    c.signature.as_ref().is_some_and(|inserted| inserted.block || c.body.text().signature().as_ref() == Some(&inserted.text))
+}
+
+/// The HTML signature shown whole below the text, when the message has one.
+fn signature_block(c: &Compose) -> Option<(&InsertedSignature, &str)> {
+    c.signature.as_ref().filter(|i| i.block).and_then(|i| i.html.as_deref().map(|h| (i, h)))
 }
 
 fn is_response(mode: ComposeMode) -> bool {
@@ -264,6 +288,12 @@ pub(crate) const QUOTE_MARK: &str = "<div id=\"mailcraft-quote\">";
 /// finds the signature as it went out.
 const SIGNATURE_MARK: &str = "<div id=\"mailcraft-signature\">";
 const SIGNATURE_END: &str = "</div><div id=\"mailcraft-signature-end\"></div>";
+/// Around an HTML signature shown whole ([`InsertedSignature::block`]), and around HTML written
+/// elsewhere ([`WrittenHtml`]), for the same reason.
+const BLOCK_SIGNATURE_MARK: &str = "<div id=\"mailcraft-html-signature\">";
+const BLOCK_SIGNATURE_END: &str = "</div><div id=\"mailcraft-html-signature-end\"></div>";
+const WRITTEN_MARK: &str = "<div id=\"mailcraft-written\">";
+const WRITTEN_END: &str = "</div><div id=\"mailcraft-written-end\"></div>";
 
 /// The original under a reply or forward, in HTML: Outlook's header lines (written here, every
 /// value escaped) and the original's look, without anything in it that runs, embeds or tracks
@@ -673,7 +703,16 @@ fn edit_draft(s: &mut Session, v: &Value) -> CmdResult {
         }
         None => (m.body.html.clone(), None),
     };
-    // The signature, found by its marks, comes back as it went: as written, until edited.
+    // HTML written elsewhere and an HTML signature, found by their marks, come back whole; a
+    // signature of the text's, as the text's signature.
+    let (own_html, written_html) = match own_html {
+        Some(html) => cut(&html, WRITTEN_MARK, WRITTEN_END),
+        None => (None, None),
+    };
+    let (own_html, block_html) = match own_html {
+        Some(html) => cut(&html, BLOCK_SIGNATURE_MARK, BLOCK_SIGNATURE_END),
+        None => (None, None),
+    };
     let (own_html, sig_html, after_html) = match own_html {
         Some(html) => split_signature(&html),
         None => (None, None, None),
@@ -696,6 +735,8 @@ fn edit_draft(s: &mut Session, v: &Value) -> CmdResult {
     let rich = own_html.as_deref().map(&mut rich_of);
     let sig_rich = sig_html.as_deref().map(&mut rich_of);
     let after_rich = after_html.as_deref().map(&mut rich_of);
+    let written_rich = written_html.as_deref().map(&mut rich_of);
+    let block_rich = block_html.as_deref().map(&mut rich_of);
     let taken: Vec<(u32, String)> = pictures
         .iter()
         .filter_map(|p| {
@@ -705,18 +746,13 @@ fn edit_draft(s: &mut Session, v: &Value) -> CmdResult {
                 .map(|a| (p.id, a.content_id.clone()))
         })
         .collect();
-    // The text before the signature (all of it without one) goes out as it was written while
-    // unedited, its pictures named as the message's own.
-    let written = match (&own_html, &rich) {
-        (Some(html), Some(text)) if !text.to_plain().trim().is_empty() || !text.pictures().is_empty() => {
-            let mut html = html.clone();
-            for (id, cid) in &taken {
-                html = html.replace(&format!("cid:{cid}"), &format!("cid:{WRITTEN_PICTURE_CID}{id}"));
-            }
-            Some(WrittenHtml { html, text: text.clone() })
+    // Its pictures named as the message's own again.
+    let written = written_html.map(|mut html| {
+        for (id, cid) in &taken {
+            html = html.replace(&format!("cid:{cid}"), &format!("cid:{WRITTEN_PICTURE_CID}{id}"));
         }
-        _ => None,
-    };
+        WrittenHtml { html, text: written_rich.unwrap_or_default() }
+    });
     let body = match (rich, sig_rich) {
         (Some(mut text), Some(sig)) => {
             let at = text.len();
@@ -727,8 +763,9 @@ fn edit_draft(s: &mut Session, v: &Value) -> CmdResult {
         }
         (rich, _) => rich,
     };
-    let signature = match (&body, sig_html) {
-        (Some(body), Some(html)) => body.signature().map(|text| InsertedSignature { text, html: Some(html), ..Default::default() }),
+    let signature = match (&body, sig_html, block_html) {
+        (_, _, Some(html)) => Some(InsertedSignature { text: block_rich.unwrap_or_default(), html: Some(html), block: true, ..Default::default() }),
+        (Some(body), Some(html), None) => body.signature().map(|text| InsertedSignature { text, html: Some(html), ..Default::default() }),
         _ => None,
     };
     let taken: Vec<String> = taken.into_iter().map(|(_, cid)| cid).collect();
@@ -822,7 +859,17 @@ fn written(s: &mut Session, v: &Value) -> CmdResult {
     };
     let c = s.compose.as_mut().ok_or_else(|| fail("no message is being written"))?;
     let Some(html) = html else {
-        c.written = None;
+        // Turned into text to edit (its words and pictures after the owner's), or taken out.
+        if let Some(w) = c.written.take()
+            && p::bool(v, "remove") != Some(true)
+        {
+            let current = c.body.text();
+            let cut_at = current.around_signature().map_or(current.paragraphs().len(), |(before, _, _)| before.map_or(0, |b| b.paragraphs().len()));
+            let mut paragraphs = current.paragraphs().get(..cut_at).unwrap_or(&[]).to_vec();
+            paragraphs.extend(w.text.paragraphs().iter().cloned());
+            paragraphs.extend(current.paragraphs().get(cut_at..).unwrap_or(&[]).iter().cloned());
+            c.body.replace(RichText::from_paragraphs(paragraphs)).map_err(|e| fail(e.to_string()))?;
+        }
         c.dirty = true;
         return done();
     };
@@ -843,8 +890,7 @@ fn written(s: &mut Session, v: &Value) -> CmdResult {
             return Err(e);
         }
     };
-    // What the window shows: its words and look, its own pictures where the HTML has them; for
-    // HTML with no words, its text as plain.
+    // What it says as rich text (for the plain-text part, and to edit it as text later).
     let pictures = &c.pictures;
     let mut widths: Vec<(u32, Option<u16>)> = Vec::new();
     let mut claim = |img: &mailcraft_mime::rich::ImgRef| {
@@ -852,41 +898,52 @@ fn written(s: &mut Session, v: &Value) -> CmdResult {
         widths.push((id, img.width));
         Some(id)
     };
-    let shown = mailcraft_mime::rich::from_html_with_pictures(&named, &mut claim);
-    // Each picture shown at the width the HTML gives it.
+    let text = mailcraft_mime::rich::from_html_with_pictures(&named, &mut claim);
     for (id, width) in widths {
         if let (Some(p), Some(w)) = (c.pictures.iter_mut().find(|p| p.id == id), width) {
             p.width = Some(w.clamp(1, mailcraft_model::pictures::MAX_SHOWN_WIDTH));
         }
     }
+    let text = if text.to_plain().trim().is_empty() && text.pictures().is_empty() { RichText::from_plain(mailcraft_html::to_text(&named).trim()) } else { text };
     // HTML that already ends with the signature (its words are in it) takes the place of the one
     // put in; `"signature"` says which, when the caller knows.
     let words = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
-    let holds_signature = c.body.text().signature().is_some_and(|sig| {
-        let sig = words(&sig.text());
+    let sig_words = c.signature.as_ref().map(|i| if i.block { i.text.text() } else { c.body.text().signature().map(|t| t.text()).unwrap_or_default() });
+    let holds_signature = sig_words.is_some_and(|sig| {
+        let sig = words(&sig);
         !sig.is_empty() && words(&mailcraft_html::to_text(&named)).contains(&sig)
     });
     if !p::bool(v, "signature").unwrap_or(!holds_signature) {
         put_signature(c, None, 0)?;
     }
-    let shown = if shown.to_plain().trim().is_empty() && shown.pictures().is_empty() { RichText::from_plain(mailcraft_html::to_text(&named).trim()) } else { shown };
-    // In place of the text before the signature, a blank line between them.
+    // The text before the signature gives way to it: the owner writes above it.
     let current = c.body.text();
     let rest: Vec<_> = match current.around_signature() {
         Some((before, _, _)) => current.paragraphs().get(before.map_or(0, |b| b.paragraphs().len())..).unwrap_or(&[]).to_vec(),
         None => Vec::new(),
     };
-    let mut paragraphs = shown.paragraphs().to_vec();
-    if !rest.is_empty() {
-        paragraphs.push(Default::default());
-    }
-    let text = RichText::from_paragraphs(paragraphs.clone());
+    let mut paragraphs = vec![Default::default()];
     paragraphs.extend(rest);
     c.body.replace(RichText::from_paragraphs(paragraphs)).map_err(|e| fail(e.to_string()))?;
     c.written = Some(WrittenHtml { html: named, text });
     c.format = BodyFormat::Html;
     c.dirty = true;
     Ok(json!({"written": true, "pictures": c.pictures.len()}))
+}
+
+/// `html` without what lies between `mark` and `end`, and that part, when the marks are there.
+fn cut(html: &str, mark: &str, end: &str) -> (Option<String>, Option<String>) {
+    let found = html.find(mark).and_then(|a| {
+        let from = a + mark.len();
+        html.get(from..)?.find(end).map(|rel| (a, from, from + rel))
+    });
+    match found {
+        Some((a, from, b)) => {
+            let rest = format!("{}{}", html.get(..a).unwrap_or(""), html.get(b + end.len()..).unwrap_or(""));
+            (Some(rest), html.get(from..b).map(str::to_string))
+        }
+        None => (Some(html.to_string()), None),
+    }
 }
 
 /// The HTML of a message written here before its signature, the signature, and after it, when
@@ -911,21 +968,16 @@ fn written_picture(cid: &str) -> Option<u32> {
     cid.trim().strip_prefix(WRITTEN_PICTURE_CID)?.parse().ok()
 }
 
-/// The HTML written elsewhere, when the text the window shows of it is as it was set.
+/// The HTML written elsewhere, when the message has some.
 fn written_unedited(c: &Compose) -> Option<&str> {
-    let w = c.written.as_ref()?;
-    let text = c.body.text();
-    let before = match text.around_signature() {
-        Some((before, _, _)) => before.unwrap_or_default(),
-        None => text.clone(),
-    };
-    (before == w.text).then_some(w.html.as_str())
+    c.written.as_ref().map(|w| w.html.as_str())
 }
 
 /// The HTML written elsewhere as it is sent: cleaned like a quoted original, its pictures named as
 /// this message's parts call them.
 fn written_sent(c: &Compose, message_id: &str) -> Option<String> {
     let mut out = mailcraft_html::quotable(written_unedited(c)?);
+    out = format!("{WRITTEN_MARK}{out}{WRITTEN_END}");
     for p in &c.pictures {
         let own = format!("cid:{WRITTEN_PICTURE_CID}{}", p.id);
         let sent = format!("cid:{}", picture_cid(p, message_id));
@@ -988,6 +1040,26 @@ fn signature(s: &mut Session, v: &Value) -> CmdResult {
     done()
 }
 
+fn signature_as_text(s: &mut Session, _: &Value) -> CmdResult {
+    let c = compose_mut(s)?;
+    let Some(i) = c.signature.clone().filter(|i| i.block) else { return Err(fail("the message has no HTML signature shown whole")) };
+    // Where it shows: after the text (before an original quoted below, which isn't text here).
+    let end = c.body.text().len();
+    c.body.put_signature(Some(&i.text), end).map_err(|e| fail(e.to_string()))?;
+    // Its pictures go with the text as the message's own.
+    let text = c.body.text().clone();
+    c.signature = text.signature().map(|text| InsertedSignature { text, block: false, html: None, ..i });
+    c.dirty = true;
+    done()
+}
+
+fn remove_signature(s: &mut Session, _: &Value) -> CmdResult {
+    let c = compose_mut(s)?;
+    put_signature(c, None, 0)?;
+    c.dirty = true;
+    done()
+}
+
 /// Replace names typed on the recipient lines with the contact they stand for, when exactly one
 /// contact matches. Answers the names nobody matched.
 fn check_names(s: &mut Session, _: &Value) -> CmdResult {
@@ -1040,26 +1112,6 @@ fn low_importance(s: &mut Session, _: &Value) -> CmdResult {
 /// The message as written so far. `strict`: every recipient must be a deliverable address. Under
 /// the Message-ID `message_id` when it is given (a draft saved again keeps its own, and so do the
 /// Content-IDs of its pictures).
-/// The message being written as it would go out, for the window to show beside the simpler copy
-/// it edits: only while HTML written elsewhere or an HTML signature goes out as written (else the
-/// copy is what goes out). Nothing is sent or kept.
-pub fn preview(s: &Session) -> Option<Message> {
-    let c = s.compose.as_ref()?;
-    let html_signature = c.signature.as_ref().is_some_and(|i| i.html.is_some()) && signature_unedited(c);
-    // HTML of the owner's own laid out (a table, a picture): text alone looks the same in the copy.
-    let laid_out = written_unedited(c).is_some_and(|h| {
-        let lower = h.to_ascii_lowercase();
-        lower.contains("<table") || lower.contains("<img")
-    });
-    if c.format != BodyFormat::Html || !(html_signature || laid_out) {
-        return None;
-    }
-    // The owner's part only: the original quoted below is shown as it is, and its pictures on the
-    // web are fetched by the owner's say-so only.
-    let own = Compose { quote: None, ..c.clone() };
-    build_as(s, &own, false, Some("preview@mailcraft.invalid")).ok()
-}
-
 fn build_as(s: &Session, c: &Compose, strict: bool, message_id: Option<&str>) -> Result<Message, CmdError> {
     // Mail written in a shared mailbox is from its address, kept in its Drafts and sent through
     // it (#70): never from its owner's own account instead.
@@ -1124,18 +1176,30 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
             .find(|p| p.id == id)
             .map(|p| if p.alt.is_empty() { mailcraft_model::pictures::PLACEHOLDER.to_string() } else { p.alt.clone() })
     };
+    // HTML written elsewhere and an HTML signature shown whole: below the owner's text, as written.
+    let written_plain = c.written.as_ref().map(|w| w.text.to_plain_with(say));
+    let block = signature_block(c);
+    let block_plain = block.map(|(i, _)| i.text.to_plain_with(|id| i.pictures.iter().find(|p| p.id == id).map(|p| p.alt.clone())));
+    let below_html = [
+        written_sent(c, message_id),
+        block.map(|(_, h)| format!("{BLOCK_SIGNATURE_MARK}{}{BLOCK_SIGNATURE_END}", own_pictures_named(&mailcraft_html::quotable(h), c, message_id))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<String>();
+    let below_plain: String = [written_plain, block_plain].into_iter().flatten().map(|t| format!("\n{t}")).collect();
     let Some((before, sig, after)) = sent_signature(c) else {
-        let plain = format!("{}{quote_text}", text.to_plain_with(say));
+        let plain = format!("{}{below_plain}{quote_text}", text.to_plain_with(say));
         return match c.format {
             BodyFormat::Html => {
-                let own = written_sent(c, message_id).unwrap_or_else(|| to_html_with(text, &img));
+                let own = format!("{}{below_html}", to_html_with(text, &img));
                 Body { text: plain, html: Some(mailcraft_mime::rich::document(&own, quote_html)) }
             }
             BodyFormat::Plain => Body { text: plain, html: None },
         };
     };
     // The signature laid out as it was made, its pictures the message's own parts.
-    let parts = [before.as_ref().map(|t| t.to_plain_with(say)), Some(sig.plain()), after.as_ref().map(|t| t.to_plain_with(say))];
+    let parts = [before.as_ref().map(|t| t.to_plain_with(say)), written_plain_again(c, say), Some(sig.plain()), after.as_ref().map(|t| t.to_plain_with(say))];
     let plain = format!("{}{quote_text}", parts.into_iter().flatten().collect::<Vec<_>>().join("\n"));
     match c.format {
         BodyFormat::Html => {
@@ -1144,9 +1208,9 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
             // here; its own pictures under the names they have in this message.
             let own = c.signature.as_ref().and_then(|i| i.html.as_deref()).filter(|_| signature_unedited(c));
             let own = own.map(|h| own_pictures_named(&mailcraft_html::quotable(h), c, message_id));
-            // HTML written elsewhere goes out as written while unedited.
             let html = [
-                written_sent(c, message_id).or_else(|| before.as_ref().map(|t| to_html_with(t, &img))),
+                before.as_ref().map(|t| to_html_with(t, &img)),
+                written_sent(c, message_id),
                 Some(format!("{SIGNATURE_MARK}{}{SIGNATURE_END}", own.unwrap_or_else(|| mailcraft_mime::rich::signature_html(&sig, &cid)))),
                 after.as_ref().map(|t| to_html_with(t, &img)),
             ];
@@ -1154,6 +1218,11 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
         }
         BodyFormat::Plain => Body { text: plain, html: None },
     }
+}
+
+/// What HTML written elsewhere says in a plain-text part.
+fn written_plain_again(c: &Compose, say: impl Fn(u32) -> Option<String>) -> Option<String> {
+    c.written.as_ref().map(|w| w.text.to_plain_with(say))
 }
 
 /// The text before the signature, the signature as it goes out (only the pictures its text
@@ -1216,6 +1285,18 @@ fn attachments_of(c: &Compose, message_id: &str) -> Vec<Attachment> {
             name: if p.name.is_empty() { format!("picture.{}", p.mime.rsplit('/').next().unwrap_or("png")) } else { p.name.clone() },
             mime: p.mime.clone(),
             content_id: picture_cid(p, message_id),
+            inline: true,
+            data: p.data.clone(),
+            kept: None,
+        }));
+    }
+    if c.format == BodyFormat::Html
+        && let Some((i, _)) = signature_block(c)
+    {
+        all.extend(i.pictures.iter().map(|p| Attachment {
+            name: p.name.clone(),
+            mime: p.mime.clone(),
+            content_id: signature_cid(p, message_id),
             inline: true,
             data: p.data.clone(),
             kept: None,

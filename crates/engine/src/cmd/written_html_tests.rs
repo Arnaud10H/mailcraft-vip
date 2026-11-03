@@ -32,12 +32,12 @@ fn html_written_elsewhere_is_sent_as_written_with_its_pictures() {
     run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Offre"}));
     let out = run(&mut s, "compose.html", json!({"html": newsletter()}));
     assert_eq!(out["pictures"], 1);
-    // The window shows its words and its picture, then the signature.
+    // Shown whole below an empty text to write in, the signature after it; nothing of it in the text.
     let c = s.compose.as_ref().unwrap();
-    let text = c.body.text();
-    assert_eq!(text.pictures().len(), 1);
-    assert!(text.text().contains("Offre de novembre") && text.text().contains("Bonjour Maya"), "{:?}", text.text());
-    assert!(text.signature().is_some_and(|sig| sig.text().contains("Avery Quinn")));
+    assert!(c.written.as_ref().is_some_and(|w| w.text.text().contains("Bonjour Maya")));
+    assert!(c.body.text().text().trim().is_empty() || c.body.text().signature().is_some_and(|sig| sig.text().contains("Avery Quinn")), "{:?}", c.body.text().text());
+    run(&mut s, "compose.select", json!({"from": 0}));
+    run(&mut s, "compose.type", json!({"text": "Voici notre offre."}));
     let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
     let m = s.mailbox.message(id).unwrap();
     let html = m.body.html.clone().unwrap();
@@ -50,18 +50,24 @@ fn html_written_elsewhere_is_sent_as_written_with_its_pictures() {
     assert!(part.inline && part.mime == "image/png", "{part:?}");
     assert!(html.contains(&format!("cid:{}", part.content_id)) && html.contains("Avery Quinn"), "{html}");
     assert!(m.body.text.contains("Bonjour Maya"), "{:?}", m.body.text);
+    // The owner's words first, then the HTML.
+    let (mine, theirs) = (html.find("Voici notre offre").unwrap(), html.find("Offre de novembre").unwrap());
+    assert!(mine < theirs, "{html}");
 }
 
 #[test]
-fn edited_here_it_is_sent_as_the_text_the_window_shows() {
+fn turned_into_text_it_is_sent_as_that_text() {
     let mut s = session();
     run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Offre"}));
     run(&mut s, "compose.html", json!({"html": newsletter()}));
+    run(&mut s, "compose.html", json!({"html": null}));
+    let c = s.compose.as_ref().unwrap();
+    assert!(c.written.is_none() && c.body.text().text().contains("Bonjour Maya") && c.body.text().pictures().len() == 1);
     run(&mut s, "compose.select", json!({"from": 0}));
     run(&mut s, "compose.type", json!({"text": "PS "}));
     let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
     let html = s.mailbox.message(id).unwrap().body.html.clone().unwrap();
-    assert!(html.contains("PS ") && !html.contains("#293c67"), "{html}");
+    assert!(html.contains("PS") && html.contains("Bonjour Maya") && !html.contains("#293c67"), "{html}");
 }
 
 #[test]
@@ -72,8 +78,8 @@ fn null_lets_the_html_go_and_junk_changes_nothing() {
     assert!(s.compose.as_ref().unwrap().written.is_none() && s.compose.as_ref().unwrap().pictures.is_empty());
     run(&mut s, "compose.html", json!({"html": "<p><b>Hi</b></p>"}));
     assert!(s.compose.as_ref().unwrap().written.is_some());
-    run(&mut s, "compose.html", json!({"html": null}));
-    assert!(s.compose.as_ref().unwrap().written.is_none());
+    run(&mut s, "compose.html", json!({"html": null, "remove": true}));
+    assert!(s.compose.as_ref().unwrap().written.is_none() && !s.compose.as_ref().unwrap().body.text().text().contains("Hi"));
     assert!(s.run("compose.html", &json!({})).is_err());
 }
 
@@ -106,7 +112,7 @@ fn html_that_ends_with_the_signature_takes_its_place_and_pictures_keep_their_wid
     run(&mut s, "compose.html", json!({"html": html}));
     let c = s.compose.as_ref().unwrap();
     assert!(c.signature.is_none() && c.body.text().signature().is_none());
-    assert_eq!(c.body.text().text().matches("Avery Quinn").count(), 1);
+    assert_eq!(c.written.as_ref().unwrap().text.text().matches("Avery Quinn").count(), 1);
     assert_eq!(c.pictures[0].width, Some(15));
     // Asked to, it keeps it.
     run(&mut s, "mail.new", json!({"subject": "Offre"}));

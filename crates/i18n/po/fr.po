@@ -14934,3 +14934,21 @@ msgstr "{count} pièces jointes enregistrées dans {folder}"
 
 msgid "HTML as Written"
 msgstr "HTML tel quel"
+
+msgid "Edit as Text"
+msgstr "Modifier en texte"
+
+msgid "Remove HTML"
+msgstr "Retirer le HTML"
+
+msgid "Signature as Text"
+msgstr "Signature en texte"
+
+msgid "Remove Signature"
+msgstr "Retirer la signature"
+
+msgid "Turn the HTML into text you can edit; it is then sent as that text"
+msgstr "Transformer le HTML en texte modifiable ; c'est alors ce texte qui est envoyé"
+
+msgid "Turn the signature into text you can edit; it is then sent as that text"
+msgstr "Transformer la signature en texte modifiable ; c'est alors ce texte qui est envoyé"

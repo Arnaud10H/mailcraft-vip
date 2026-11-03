@@ -609,16 +609,16 @@ pub struct Quote {
     pub pictures: Vec<Attachment>,
 }
 
-/// A message's text written in HTML elsewhere (a whole message pasted, or handed over by an agent:
-/// `compose.html`), sent as written, cleaned like a quoted original, while the text the window
-/// shows of it is not edited. Its pictures written in (`data:`) are the message's own
+/// HTML written elsewhere (a whole message pasted, or handed over by an agent: `compose.html`),
+/// shown whole below the owner's text as it goes out, and sent there as written, cleaned like a
+/// quoted original. Its pictures written in (`data:`) are the message's own
 /// ([`Compose::pictures`]), which the HTML names `cid:` and [`WRITTEN_PICTURE_CID`] with their id.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct WrittenHtml {
     pub html: String,
-    /// What the window shows of it, as it was set: the text before the signature (all of it
-    /// without one). The text no longer being this means the owner edited it.
+    /// What it says as rich text: the plain-text part, and the text it becomes when the owner
+    /// turns it into text to edit.
     pub text: mailcraft_model::rich::RichText,
 }
 
@@ -661,7 +661,7 @@ pub struct Compose {
     pub importance: Importance,
     pub in_reply_to: String,
     pub references: Vec<String>,
-    /// Its text written in HTML elsewhere, sent as written while unedited; `None` for others.
+    /// HTML written elsewhere, shown and sent below the owner's text; `None` for others.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub written: Option<WrittenHtml>,
     /// The signature put in the body (its paragraphs are marked there): which one, how it lays
@@ -707,6 +707,10 @@ pub struct InsertedSignature {
     /// The owner's own HTML, for an HTML signature: what goes out while the text is unedited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
+    /// An HTML signature shown whole below the text, as it goes out, not as paragraphs of the
+    /// text (`text` then is what a plain-text part says of it).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub block: bool,
 }
 
 /// A signature open in File › Signatures (R4.5.3): edited as a message's body is, by the

@@ -376,6 +376,10 @@ fn an_html_signature_edited_in_the_message_goes_out_as_edited() {
     run(&mut s, "signature.set", json!({"name": "Generated", "text": "", "default": true}));
     run(&mut s, "signature.html", json!({"name": "Generated", "html": GENERATED}));
     run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "body": "Hello"}));
+    // Shown whole below the text; turned into text to edit, it goes out as that text.
+    let c = s.compose.as_ref().unwrap();
+    assert!(c.signature.as_ref().is_some_and(|i| i.block) && c.body.text().signature().is_none());
+    run(&mut s, "compose.signatureAsText", json!({}));
     let end = s.compose.as_ref().unwrap().body.text().len();
     run(&mut s, "compose.select", json!({"from": end}));
     run(&mut s, "compose.type", json!({"text": " PhD"}));

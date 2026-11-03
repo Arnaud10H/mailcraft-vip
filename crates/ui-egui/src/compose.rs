@@ -338,19 +338,37 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     // forward in HTML, as the reading pane shows it.
     egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("compose_body").show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 16 }).show(ui, |ui| {
-            let preview = sent_preview(app, ui.ctx());
-            let room = if c.quote || preview.is_some() { 8.0 * 19.0 } else { (ui.available_height() - 26.0).max(8.0 * 19.0) };
+            let blocks = html_blocks(app, ui.ctx());
+            let room = if c.quote || blocks.is_some() { 6.0 * 19.0 } else { (ui.available_height() - 26.0).max(8.0 * 19.0) };
             editor::show(app, ui, room, fresh && !focus_to);
-            // HTML that goes out as written (a signature, a message laid out elsewhere): shown
-            // as recipients see it, the text above being a simpler copy of it.
-            if let Some(m) = preview {
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new(tl!("As recipients see it")).id_salt("compose_sent_preview").default_open(true).show(ui, |ui| {
-                    let below = Rect::everything_below(ui.cursor().min.y);
-                    ui.scope(|ui| {
-                        ui.set_clip_rect(ui.clip_rect().intersect(below));
-                        crate::reading::show_plain_view(app, ui, &m, crate::reading::Place::Preview);
-                    });
+            // HTML written elsewhere and an HTML signature: shown whole, as they go out, below the
+            // text the owner writes.
+            if let Some(m) = blocks {
+                ui.add_space(6.0);
+                let (written, signature) = app.session.compose.as_ref().map_or((false, false), |c| (c.written.is_some(), c.signature.as_ref().is_some_and(|i| i.block)));
+                ui.horizontal(|ui| {
+                    let small = |label: &str| egui::Button::new(egui::RichText::new(label).font(regular(11.5))).small();
+                    if written {
+                        if ui.add(small(tl!("Edit as Text"))).on_hover_text(tl!("Turn the HTML into text you can edit; it is then sent as that text")).clicked() {
+                            let _ = app.run("compose.html", json!({"html": null}));
+                        }
+                        if ui.add(small(tl!("Remove HTML"))).clicked() {
+                            let _ = app.run("compose.html", json!({"html": null, "remove": true}));
+                        }
+                    }
+                    if signature {
+                        if ui.add(small(tl!("Signature as Text"))).on_hover_text(tl!("Turn the signature into text you can edit; it is then sent as that text")).clicked() {
+                            let _ = app.run("compose.signatureAsText", json!({}));
+                        }
+                        if ui.add(small(tl!("Remove Signature"))).clicked() {
+                            let _ = app.run("compose.removeSignature", json!({}));
+                        }
+                    }
+                });
+                let below = Rect::everything_below(ui.cursor().min.y);
+                ui.scope(|ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(below));
+                    crate::reading::show_plain_view(app, ui, &m, crate::reading::Place::Preview);
                 });
             }
             if c.quote {
@@ -368,30 +386,51 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     });
 }
 
-/// The message being written as it goes out (`mailcraft_engine::cmd::compose::preview`), made
-/// again only when what is written changes.
-fn sent_preview(app: &MailApp, ctx: &egui::Context) -> Option<std::sync::Arc<mailcraft_model::Message>> {
+/// The HTML written elsewhere and the HTML signature of the message being written, as one message
+/// to show (their pictures by the names their HTML gives them), made again only when they change.
+fn html_blocks(app: &MailApp, ctx: &egui::Context) -> Option<std::sync::Arc<mailcraft_model::Message>> {
     let c = app.session.compose.as_ref()?;
+    let written = c.written.as_ref().map(|w| w.html.as_str());
+    let signature = c.signature.as_ref().filter(|i| i.block).and_then(|i| i.html.as_deref().map(|h| (i, h)));
+    if written.is_none() && signature.is_none() {
+        return None;
+    }
     let stamp = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        mailcraft_model::signature::text_hash(c.body.text()).hash(&mut h);
-        (c.format == mailcraft_engine::BodyFormat::Html).hash(&mut h);
-        c.signature.as_ref().map(|i| (i.name.clone(), i.html.clone())).hash(&mut h);
-        c.written.as_ref().map(|w| w.html.len()).hash(&mut h);
+        written.hash(&mut h);
+        signature.map(|(_, h)| h).hash(&mut h);
         c.pictures.iter().map(|p| (p.id, p.width)).collect::<Vec<_>>().hash(&mut h);
         h.finish()
     };
-    let key = egui::Id::unique("mailcraft-compose-sent-preview");
-    if let Some((k, m)) = ctx.data(|d| d.get_temp::<(u64, Option<std::sync::Arc<mailcraft_model::Message>>)>(key))
+    let key = egui::Id::unique("mailcraft-compose-html-blocks");
+    if let Some((k, m)) = ctx.data(|d| d.get_temp::<(u64, std::sync::Arc<mailcraft_model::Message>)>(key))
         && k == stamp
     {
-        return m;
+        return Some(m);
     }
-    let m = mailcraft_engine::cmd::compose::preview(&app.session)
-        .map(|m| std::sync::Arc::new(mailcraft_model::Message { id: crate::reading::remote::PREVIEW, ..m }));
+    let html = format!("{}{}", written.unwrap_or(""), signature.map_or("", |(_, h)| h));
+    let picture = |p: &mailcraft_model::signature::Picture, cid: String| mailcraft_model::Attachment {
+        content_id: cid,
+        inline: true,
+        data: p.data.clone(),
+        ..mailcraft_model::Attachment::new(p.name.clone(), p.mime.clone(), Vec::new())
+    };
+    let mut attachments: Vec<mailcraft_model::Attachment> =
+        c.pictures.iter().map(|p| picture(p, format!("{}{}", mailcraft_engine::WRITTEN_PICTURE_CID, p.id))).collect();
+    if let Some((i, _)) = signature {
+        attachments.extend(i.pictures.iter().map(|p| picture(p, mailcraft_model::signature::Signature::picture_cid(p.id))));
+    }
+    // A draft opened again carries the signature's pictures as its own parts, by the names its HTML gives them.
+    attachments.extend(c.attachments.iter().filter(|a| a.inline && !a.content_id.is_empty()).cloned());
+    let m = std::sync::Arc::new(mailcraft_model::Message {
+        body: mailcraft_model::Body { text: String::new(), html: Some(html) },
+        attachments,
+        id: crate::reading::remote::PREVIEW,
+        ..mailcraft_model::Message::default()
+    });
     ctx.data_mut(|d| d.insert_temp(key, (stamp, m.clone())));
-    m
+    Some(m)
 }
 
 #[cfg(test)]
