@@ -13,7 +13,7 @@ use mailcraft_model::{
 use serde_json::{Value, json};
 
 use super::{bad, base64_decode, done, fail, needs_compose, needs_message, source};
-use crate::{BodyFormat, CmdError, CmdResult, CommandSpec, Compose, ComposeMode, InsertedSignature, Quote, Session, p};
+use crate::{BodyFormat, CmdError, CmdResult, CommandSpec, Compose, ComposeMode, InsertedSignature, Quote, Session, WRITTEN_PICTURE_CID, WrittenHtml, p};
 
 /// Largest single attachment and most attachments on one message.
 const MAX_ATTACHMENT: usize = 64 << 20;
@@ -45,6 +45,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(r#"{"path": string} | {"name": string, "data": base64}, "mime"?: string"#)
             .when(needs_compose),
         CommandSpec::new("compose.removeAttachment", "Remove Attachment", "Message › Include", remove_attachment).pure().params(r#"{"index": number}"#).when(needs_compose),
+        CommandSpec::new("compose.html", "HTML as Written", "Message › Include", written)
+            .pure()
+            .params(r#"{"html": string (a whole message written in HTML elsewhere: tables, colours, pictures; a picture written into it as `data:image/…;base64,…`, PNG, JPEG or GIF, goes with the message as a part of its own, other pictures stay on the web) | null (the text as it stands, sent as rich text again), "path"?: string (an .html file, in place of `html`)} — the message's text before the signature becomes that HTML: the window shows a simpler copy, and the HTML is sent as written, without anything that runs or tracks, until the copy is edited"#)
+            .when(needs_compose),
         CommandSpec::new("compose.signature", "Signature", "Message › Include", signature).pure().params(r#"{"name"?: string} (default: the account's signature)"#).when(needs_compose),
         CommandSpec::new("compose.checkNames", "Check Names", "Message › Names", check_names).pure().key("Mod+K").when(needs_compose),
         CommandSpec::new("compose.suggest", "Suggest Recipients", "Message › Names", suggest_command)
@@ -761,6 +765,95 @@ fn set(s: &mut Session, v: &Value) -> CmdResult {
     done()
 }
 
+/// `compose.html`: the text before the signature becomes HTML written elsewhere, kept to be sent
+/// as written ([`WrittenHtml`]); the window shows what it says as rich text, its pictures written
+/// in among it.
+fn written(s: &mut Session, v: &Value) -> CmdResult {
+    let html = match (v.get("html"), p::str(v, "path")) {
+        (Some(Value::String(h)), _) => Some(h.clone()),
+        (_, Some(_)) => Some(String::from_utf8(source(v)?.1).map_err(|_| fail("the file isn't text in UTF-8"))?),
+        (Some(Value::Null), None) => None,
+        _ => return Err(bad("`html` (string or null) or `path` is required")),
+    };
+    let c = s.compose.as_mut().ok_or_else(|| fail("no message is being written"))?;
+    let Some(html) = html else {
+        c.written = None;
+        c.dirty = true;
+        return done();
+    };
+    if html.len() > super::format::MAX_PASTE {
+        return Err(fail("that is too much HTML for one message"));
+    }
+    let (kept, seq) = (c.pictures.clone(), c.picture_seq);
+    let mut held: std::collections::HashSet<u32> = c.body.text().pictures().into_iter().collect();
+    let named = super::data_pictures(&html, "picture", |name, bytes| {
+        let id = mailcraft_model::pictures::add(&mut c.pictures, &mut c.picture_seq, &held, name, bytes, None, None).map_err(|e| fail(e.to_string()))?;
+        held.insert(id);
+        Ok(format!("{WRITTEN_PICTURE_CID}{id}"))
+    });
+    let named = match named {
+        Ok(named) => named,
+        Err(e) => {
+            (c.pictures, c.picture_seq) = (kept, seq);
+            return Err(e);
+        }
+    };
+    // What the window shows: its words and look, its own pictures where the HTML has them; for
+    // HTML with no words, its text as plain.
+    let pictures = &c.pictures;
+    let mut claim = |img: &mailcraft_mime::rich::ImgRef| written_picture(&img.cid).filter(|id| pictures.iter().any(|p| p.id == *id));
+    let shown = mailcraft_mime::rich::from_html_with_pictures(&named, &mut claim);
+    let shown = if shown.to_plain().trim().is_empty() && shown.pictures().is_empty() { RichText::from_plain(mailcraft_html::to_text(&named).trim()) } else { shown };
+    // In place of the text before the signature, a blank line between them.
+    let current = c.body.text();
+    let rest: Vec<_> = match current.around_signature() {
+        Some((before, _, _)) => current.paragraphs().get(before.map_or(0, |b| b.paragraphs().len())..).unwrap_or(&[]).to_vec(),
+        None => Vec::new(),
+    };
+    let mut paragraphs = shown.paragraphs().to_vec();
+    if !rest.is_empty() {
+        paragraphs.push(Default::default());
+    }
+    let text = RichText::from_paragraphs(paragraphs.clone());
+    paragraphs.extend(rest);
+    c.body.replace(RichText::from_paragraphs(paragraphs)).map_err(|e| fail(e.to_string()))?;
+    c.written = Some(WrittenHtml { html: named, text });
+    c.format = BodyFormat::Html;
+    c.dirty = true;
+    Ok(json!({"written": true, "pictures": c.pictures.len()}))
+}
+
+/// The picture of the message's own a `cid:` of its [`WrittenHtml`] names, when it is one.
+fn written_picture(cid: &str) -> Option<u32> {
+    cid.trim().strip_prefix(WRITTEN_PICTURE_CID)?.parse().ok()
+}
+
+/// The HTML written elsewhere, when the text the window shows of it is as it was set.
+fn written_unedited(c: &Compose) -> Option<&str> {
+    let w = c.written.as_ref()?;
+    let text = c.body.text();
+    let before = match text.around_signature() {
+        Some((before, _, _)) => before.unwrap_or_default(),
+        None => text.clone(),
+    };
+    (before == w.text).then_some(w.html.as_str())
+}
+
+/// The HTML written elsewhere as it is sent: cleaned like a quoted original, its pictures named as
+/// this message's parts call them.
+fn written_sent(c: &Compose, message_id: &str) -> Option<String> {
+    let mut out = mailcraft_html::quotable(written_unedited(c)?);
+    for p in &c.pictures {
+        let own = format!("cid:{WRITTEN_PICTURE_CID}{}", p.id);
+        let sent = format!("cid:{}", picture_cid(p, message_id));
+        // (Whole names only: `written-picture-1` is not the start of `written-picture-12`.)
+        for quote in ['"', '\'', ' ', '>'] {
+            out = out.replace(&format!("{own}{quote}"), &format!("{sent}{quote}"));
+        }
+    }
+    Some(out)
+}
+
 fn attach(s: &mut Session, v: &Value) -> CmdResult {
     let (name, bytes) = match p::str(v, "data") {
         Some(data) => (p::req_str(v, "name")?.to_string(), base64_decode(data)?),
@@ -931,7 +1024,10 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
     let Some((before, sig, after)) = sent_signature(c) else {
         let plain = format!("{}{quote_text}", text.to_plain_with(say));
         return match c.format {
-            BodyFormat::Html => Body { text: plain, html: Some(mailcraft_mime::rich::document(&to_html_with(text, &img), quote_html)) },
+            BodyFormat::Html => {
+                let own = written_sent(c, message_id).unwrap_or_else(|| to_html_with(text, &img));
+                Body { text: plain, html: Some(mailcraft_mime::rich::document(&own, quote_html)) }
+            }
             BodyFormat::Plain => Body { text: plain, html: None },
         };
     };
@@ -945,8 +1041,9 @@ fn body_of(c: &Compose, message_id: &str) -> Body {
             // here; its own pictures under the names they have in this message.
             let own = c.signature.as_ref().and_then(|i| i.html.as_deref()).filter(|_| signature_unedited(c));
             let own = own.map(|h| own_pictures_named(&mailcraft_html::quotable(h), c, message_id));
+            // HTML written elsewhere goes out as written while unedited.
             let html = [
-                before.as_ref().map(|t| to_html_with(t, &img)),
+                written_sent(c, message_id).or_else(|| before.as_ref().map(|t| to_html_with(t, &img))),
                 Some(own.unwrap_or_else(|| mailcraft_mime::rich::signature_html(&sig, &cid))),
                 after.as_ref().map(|t| to_html_with(t, &img)),
             ];
@@ -1007,7 +1104,11 @@ fn attachments_of(c: &Compose, message_id: &str) -> Vec<Attachment> {
     let mut all = c.attachments.clone();
     if c.format == BodyFormat::Html {
         // Only the pictures the text shows (one that was deleted stays for undo, not for sending).
-        let held: std::collections::HashSet<u32> = c.body.text().pictures().into_iter().collect();
+        let mut held: std::collections::HashSet<u32> = c.body.text().pictures().into_iter().collect();
+        // And those HTML written elsewhere shows, sent as written.
+        if let Some(html) = written_unedited(c) {
+            held.extend(c.pictures.iter().map(|p| p.id).filter(|id| html.contains(&format!("cid:{WRITTEN_PICTURE_CID}{id}"))));
+        }
         all.extend(c.pictures.iter().filter(|p| held.contains(&p.id)).map(|p| Attachment {
             name: if p.name.is_empty() { format!("picture.{}", p.mime.rsplit('/').next().unwrap_or("png")) } else { p.name.clone() },
             mime: p.mime.clone(),

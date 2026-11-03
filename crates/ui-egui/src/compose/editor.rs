@@ -753,6 +753,11 @@ pub(crate) fn show_doc(app: &mut MailApp, ui: &mut Ui, which: Which, min_height:
                             let command = if which == Which::Signature { "signature.picture.add" } else { "insert.picture" };
                             ask(command, json!({"data": crate::files::base64_lite::encode(&png), "file": "picture.png"}))
                         }
+                        // A whole message laid out in HTML (a table, pictures) pasted into a
+                        // message with nothing written yet is kept as written (`compose.html`).
+                        (None, Some(html)) if which == Which::Message && laid_out(&html) && nothing_written(app) => {
+                            ask("compose.html", json!({"html": html}))
+                        }
                         (None, Some(html)) => ask("edit.paste", json!({"html": html, "text": text})),
                         (None, None) if !text.is_empty() => ask("edit.paste", json!({"text": text})),
                         (None, None) => None,
@@ -1078,4 +1083,22 @@ mod tests {
     fn words_are_letters_and_digits() {
         assert_eq!([class(' '), class(','), class('é'), class('7')], [0, 1, 2, 2]);
     }
+}
+
+/// Whether pasted HTML is a message laid out on its own: a table or a picture in it.
+fn laid_out(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    lower.contains("<table") || lower.contains("<img")
+}
+
+/// Whether the message being written has no words yet, its signature aside.
+fn nothing_written(app: &MailApp) -> bool {
+    app.session.compose.as_ref().is_some_and(|c| {
+        let text = c.body.text();
+        let before = match text.around_signature() {
+            Some((before, _, _)) => before.map(|b| b.text()).unwrap_or_default(),
+            None => text.text(),
+        };
+        before.trim().is_empty()
+    })
 }

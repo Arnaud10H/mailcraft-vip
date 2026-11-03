@@ -103,6 +103,8 @@ pub mod writing_tools;
 #[cfg(test)]
 mod writing_tools_tests;
 #[cfg(test)]
+mod written_html_tests;
+#[cfg(test)]
 mod zone_tests;
 pub mod zones;
 
@@ -384,6 +386,43 @@ pub(crate) fn deliver(v: &Value, name: &str, bytes: Vec<u8>) -> CmdResult {
         }
         None => Ok(json!({"name": name, "bytes": bytes.len(), "data": base64_encode(&bytes)})),
     }
+}
+
+/// `html` with each picture written into it (`src="data:image/…;base64,…"`) given to `adopt`
+/// (a name, `stem` and a number: `picture-1.png`, and its bytes), which answers the `cid:` name that takes its
+/// place. A picture that isn't base64 is the error, and so is whatever `adopt` refuses.
+pub(crate) fn data_pictures(html: &str, stem: &str, mut adopt: impl FnMut(&str, Vec<u8>) -> Result<String, CmdError>) -> Result<String, CmdError> {
+    use mailcraft_charset::base64::STANDARD;
+    let lower = html.to_ascii_lowercase();
+    let (mut out, mut at, mut count) = (String::with_capacity(html.len()), 0usize, 0u32);
+    while let Some(start) = lower.get(at..).and_then(|rest| rest.find("data:image/")).map(|rel| at + rel) {
+        // The value's quote before it, and after it: `src="data:…"` or `src='data:…'`.
+        let quote = html.as_bytes().get(start.wrapping_sub(1)).copied().filter(|b| matches!(b, b'"' | b'\''));
+        let end = quote.and_then(|q| html.get(start..).and_then(|rest| rest.find(q as char)).map(|rel| start + rel));
+        let Some(end) = end else {
+            out.push_str(html.get(at..start + 11).unwrap_or(""));
+            at = start + 11;
+            continue;
+        };
+        let value = html.get(start..end).unwrap_or("");
+        let Some((head, encoded)) = value.split_once(',').filter(|(head, _)| head.to_ascii_lowercase().contains(";base64")) else {
+            out.push_str(html.get(at..end).unwrap_or(""));
+            at = end;
+            continue;
+        };
+        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
+        let bytes = STANDARD.decode(cleaned.as_bytes()).map_err(|_| fail("a picture written into the HTML isn't base64"))?;
+        count = count.saturating_add(1);
+        let extension = head.trim_start_matches("data:image/").split(';').next().unwrap_or("png").to_ascii_lowercase();
+        let name = format!("{stem}-{count}.{}", if extension == "jpeg" { "jpg".to_string() } else { extension });
+        let cid = adopt(&name, bytes)?;
+        out.push_str(html.get(at..start).unwrap_or(""));
+        out.push_str("cid:");
+        out.push_str(&cid);
+        at = end;
+    }
+    out.push_str(html.get(at..).unwrap_or(""));
+    Ok(out)
 }
 
 /// The bytes a command reads: base64 `data`, or the file at `path`.

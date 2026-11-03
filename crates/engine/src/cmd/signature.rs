@@ -398,42 +398,15 @@ fn html(s: &mut Session, v: &Value) -> CmdResult {
     done()
 }
 
-/// `html` with each picture written into it (`src="data:image/…;base64,…"`) taken into `sig` as
-/// a picture of its own and named by its `cid:` in its place. A picture the signature can't take
-/// (too large, too many, not a PNG, JPEG or GIF) is the error. Pictures the signature had from an
+/// `html` with each picture written into it taken into `sig` as a picture of its own and named by
+/// its `cid:` in its place ([`super::data_pictures`]). A picture the signature can't take (too
+/// large, too many, not a PNG, JPEG or GIF) is the error. Pictures the signature had from an
 /// earlier HTML and that this one no longer names go when the stand-in text is set.
 fn adopt_data_pictures(sig: &mut Signature, html: &str) -> Result<String, CmdError> {
-    use mailcraft_charset::base64::STANDARD;
-    let lower = html.to_ascii_lowercase();
-    let (mut out, mut at, mut count) = (String::with_capacity(html.len()), 0usize, 0u32);
-    while let Some(start) = lower.get(at..).and_then(|rest| rest.find("data:image/")).map(|rel| at + rel) {
-        // The value's quote before it, and after it: `src="data:…"` or `src='data:…'`.
-        let quote = html.as_bytes().get(start.wrapping_sub(1)).copied().filter(|b| matches!(b, b'"' | b'\''));
-        let end = quote.and_then(|q| html.get(start..).and_then(|rest| rest.find(q as char)).map(|rel| start + rel));
-        let Some(end) = end else {
-            out.push_str(html.get(at..start + 11).unwrap_or(""));
-            at = start + 11;
-            continue;
-        };
-        let value = html.get(start..end).unwrap_or("");
-        let Some((head, encoded)) = value.split_once(',').filter(|(head, _)| head.to_ascii_lowercase().contains(";base64")) else {
-            out.push_str(html.get(at..end).unwrap_or(""));
-            at = end;
-            continue;
-        };
-        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
-        let bytes = STANDARD.decode(cleaned.as_bytes()).map_err(|_| fail("a picture written into the signature's HTML isn't base64"))?;
-        count = count.saturating_add(1);
-        let extension = head.trim_start_matches("data:image/").split(';').next().unwrap_or("png").to_ascii_lowercase();
-        let name = format!("signature-{count}.{}", if extension == "jpeg" { "jpg".to_string() } else { extension });
-        let id = sig.add_picture(&name, bytes, Some(""), None).map_err(|e| fail(e.to_string()))?;
-        out.push_str(html.get(at..start).unwrap_or(""));
-        out.push_str("cid:");
-        out.push_str(&Signature::picture_cid(id));
-        at = end;
-    }
-    out.push_str(html.get(at..).unwrap_or(""));
-    Ok(out)
+    super::data_pictures(html, "signature", |name, bytes| {
+        let id = sig.add_picture(name, bytes, Some(""), None).map_err(|e| fail(e.to_string()))?;
+        Ok(Signature::picture_cid(id))
+    })
 }
 
 fn layout(s: &mut Session, v: &Value) -> CmdResult {

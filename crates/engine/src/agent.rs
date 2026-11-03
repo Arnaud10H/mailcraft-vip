@@ -170,6 +170,7 @@ const SAFE: &[&str] = &[
     "mail.editDraft",
     // Writing (sending is not).
     "compose.set",
+    "compose.html",
     "compose.attach",
     "insert.picture",
     "compose.removeAttachment",
@@ -564,6 +565,7 @@ pub const FILE_PARAMS: &[(&str, &str, FileUse)] = &[
     ("file.import", "path", FileUse::Reads { name_key: "name" }),
     ("file.importFolderTree", "path", FileUse::Reads { name_key: "name" }),
     ("compose.attach", "path", FileUse::Reads { name_key: "name" }),
+    ("compose.html", "path", FileUse::Reads { name_key: "name" }),
     ("insert.picture", "path", FileUse::Reads { name_key: "file" }),
     ("signature.picture.add", "path", FileUse::Reads { name_key: "file" }),
     ("file.save", "path", FileUse::Refused),

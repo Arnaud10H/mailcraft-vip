@@ -609,6 +609,22 @@ pub struct Quote {
     pub pictures: Vec<Attachment>,
 }
 
+/// A message's text written in HTML elsewhere (a whole message pasted, or handed over by an agent:
+/// `compose.html`), sent as written, cleaned like a quoted original, while the text the window
+/// shows of it is not edited. Its pictures written in (`data:`) are the message's own
+/// ([`Compose::pictures`]), which the HTML names `cid:` and [`WRITTEN_PICTURE_CID`] with their id.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WrittenHtml {
+    pub html: String,
+    /// What the window shows of it, as it was set: the text before the signature (all of it
+    /// without one). The text no longer being this means the owner edited it.
+    pub text: mailcraft_model::rich::RichText,
+}
+
+/// What the HTML of a [`WrittenHtml`] calls a picture of the message's own, before its id.
+pub const WRITTEN_PICTURE_CID: &str = "written-picture-";
+
 /// The message being written. Recipient lines are text, as typed (`Ada <ada@example.org>; bob@…`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -645,6 +661,9 @@ pub struct Compose {
     pub importance: Importance,
     pub in_reply_to: String,
     pub references: Vec<String>,
+    /// Its text written in HTML elsewhere, sent as written while unedited; `None` for others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub written: Option<WrittenHtml>,
     /// The signature put in the body (its paragraphs are marked there): which one, how it lays
     /// out its first picture, and the pictures it carries. `None` when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
