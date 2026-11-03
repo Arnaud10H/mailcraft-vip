@@ -338,8 +338,21 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     // forward in HTML, as the reading pane shows it.
     egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("compose_body").show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 16 }).show(ui, |ui| {
-            let room = if c.quote { 8.0 * 19.0 } else { (ui.available_height() - 26.0).max(8.0 * 19.0) };
+            let preview = sent_preview(app, ui.ctx());
+            let room = if c.quote || preview.is_some() { 8.0 * 19.0 } else { (ui.available_height() - 26.0).max(8.0 * 19.0) };
             editor::show(app, ui, room, fresh && !focus_to);
+            // HTML that goes out as written (a signature, a message laid out elsewhere): shown
+            // as recipients see it, the text above being a simpler copy of it.
+            if let Some(m) = preview {
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new(tl!("As recipients see it")).id_salt("compose_sent_preview").default_open(true).show(ui, |ui| {
+                    let below = Rect::everything_below(ui.cursor().min.y);
+                    ui.scope(|ui| {
+                        ui.set_clip_rect(ui.clip_rect().intersect(below));
+                        crate::reading::show_plain_view(app, ui, &m, crate::reading::Place::Preview);
+                    });
+                });
+            }
             if c.quote {
                 ui.add_space(8.0);
                 // The original senses the pointer over all of the view it is drawn in: kept to
@@ -353,6 +366,32 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             }
         });
     });
+}
+
+/// The message being written as it goes out (`mailcraft_engine::cmd::compose::preview`), made
+/// again only when what is written changes.
+fn sent_preview(app: &MailApp, ctx: &egui::Context) -> Option<std::sync::Arc<mailcraft_model::Message>> {
+    let c = app.session.compose.as_ref()?;
+    let stamp = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        mailcraft_model::signature::text_hash(c.body.text()).hash(&mut h);
+        (c.format == mailcraft_engine::BodyFormat::Html).hash(&mut h);
+        c.signature.as_ref().map(|i| (i.name.clone(), i.html.clone())).hash(&mut h);
+        c.written.as_ref().map(|w| w.html.len()).hash(&mut h);
+        c.pictures.iter().map(|p| (p.id, p.width)).collect::<Vec<_>>().hash(&mut h);
+        h.finish()
+    };
+    let key = egui::Id::unique("mailcraft-compose-sent-preview");
+    if let Some((k, m)) = ctx.data(|d| d.get_temp::<(u64, Option<std::sync::Arc<mailcraft_model::Message>>)>(key))
+        && k == stamp
+    {
+        return m;
+    }
+    let m = mailcraft_engine::cmd::compose::preview(&app.session)
+        .map(|m| std::sync::Arc::new(mailcraft_model::Message { id: crate::reading::remote::PREVIEW, ..m }));
+    ctx.data_mut(|d| d.insert_temp(key, (stamp, m.clone())));
+    m
 }
 
 #[cfg(test)]

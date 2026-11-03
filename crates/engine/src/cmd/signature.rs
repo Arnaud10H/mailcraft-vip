@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             r#"{"name": string, "details": {"name"?, "title"?, "organisation"?, "phone"?, "mobile"?, "email"?, "website"?, "address"?: string}, "restart"?: bool (lay it out again after it was edited by hand)} — lays the signature out from the details (the logo is its first picture); after a hand edit only keeps them, unless restart"#,
         ),
         CommandSpec::new("signature.html", "HTML Signature", "File › Signatures", html).params(
-            r#"{"name"?: string (default: the open one), "html": string (the signature's own HTML, at most 64 KB; sent as written once cleaned of what runs or tracks; a picture written into it (`<img src="data:image/…;base64,…">`, PNG, JPEG or GIF) becomes the signature's own, sent with each message as a part of its own and shown in the message being written; other pictures only from their web address) | null (rich text again, of what the HTML made)} — makes it an HTML signature, or a rich one again"#,
+            r#"{"name"?: string (default: the open one), "html": string (the signature's own HTML, at most 64 KB; sent as written once cleaned of what runs or tracks; a picture written into it (`<img src="data:image/…;base64,…">`, PNG, JPEG or GIF) becomes the signature's own, sent with each message as a part of its own and shown in the message being written; other pictures only from their web address) | null (rich text again, of what the HTML made), "path"?: string (an .html file, in place of `html`)} — makes it an HTML signature, or a rich one again"#,
         ),
         CommandSpec::new("signature.open", "Edit Signature", "File › Signatures", open)
             .pure()
@@ -362,10 +362,12 @@ pub(crate) fn picture_places(text: &RichText, id: u32) -> Vec<usize> {
 }
 
 fn html(s: &mut Session, v: &Value) -> CmdResult {
-    let html = match v.get("html") {
-        Some(Value::Null) => None,
-        Some(Value::String(h)) => Some(h.clone()),
-        _ => return Err(bad("`html` is the signature's HTML, or null")),
+    let html = match (v.get("html"), p::str(v, "path")) {
+        (Some(Value::String(h)), _) => Some(h.clone()),
+        // From a file: a signature with its pictures written in is too large for some clipboards.
+        (_, Some(_)) => Some(String::from_utf8(super::source(v)?.1).map_err(|_| fail("the file isn't text in UTF-8"))?),
+        (Some(Value::Null), None) => None,
+        _ => return Err(bad("`html` is the signature's HTML, or null; or `path`, an .html file")),
     };
     let open = names_open(s, v);
     // Changed whole or not at all.

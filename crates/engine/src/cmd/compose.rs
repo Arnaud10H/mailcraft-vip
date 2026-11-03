@@ -1040,6 +1040,18 @@ fn low_importance(s: &mut Session, _: &Value) -> CmdResult {
 /// The message as written so far. `strict`: every recipient must be a deliverable address. Under
 /// the Message-ID `message_id` when it is given (a draft saved again keeps its own, and so do the
 /// Content-IDs of its pictures).
+/// The message being written as it would go out, for the window to show beside the simpler copy
+/// it edits: only while HTML written elsewhere or an HTML signature goes out as written (else the
+/// copy is what goes out). Nothing is sent or kept.
+pub fn preview(s: &Session) -> Option<Message> {
+    let c = s.compose.as_ref()?;
+    let html_signature = c.signature.as_ref().is_some_and(|i| i.html.is_some()) && signature_unedited(c);
+    if c.format != BodyFormat::Html || !(html_signature || written_unedited(c).is_some()) {
+        return None;
+    }
+    build_as(s, c, false, Some("preview@mailcraft.invalid")).ok()
+}
+
 fn build_as(s: &Session, c: &Compose, strict: bool, message_id: Option<&str>) -> Result<Message, CmdError> {
     // Mail written in a shared mailbox is from its address, kept in its Drafts and sent through
     // it (#70): never from its owner's own account instead.

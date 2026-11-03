@@ -566,6 +566,7 @@ pub const FILE_PARAMS: &[(&str, &str, FileUse)] = &[
     ("file.importFolderTree", "path", FileUse::Reads { name_key: "name" }),
     ("compose.attach", "path", FileUse::Reads { name_key: "name" }),
     ("compose.html", "path", FileUse::Reads { name_key: "name" }),
+    ("signature.html", "path", FileUse::Reads { name_key: "name" }),
     ("insert.picture", "path", FileUse::Reads { name_key: "file" }),
     ("signature.picture.add", "path", FileUse::Reads { name_key: "file" }),
     ("file.save", "path", FileUse::Refused),

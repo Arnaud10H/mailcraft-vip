@@ -554,3 +554,15 @@ fn an_html_signature_comes_back_whole_when_its_draft_opens_again() {
 fn embedded_beside(html: &str) -> String {
     format!(r#"<img src="data:image/png;base64,{}" alt="mark">{html}"#, png())
 }
+
+#[test]
+fn an_html_signature_comes_from_a_file_whole() {
+    let mut s = session();
+    run(&mut s, "signature.set", json!({"name": "Brand", "text": ""}));
+    let path = std::env::temp_dir().join(format!("mailcraft-sig-{}.html", std::process::id()));
+    std::fs::write(&path, embedded_beside(LAID_OUT)).unwrap();
+    run(&mut s, "signature.html", json!({"name": "Brand", "path": path.to_string_lossy()}));
+    let _ = std::fs::remove_file(&path);
+    let sig = s.mailbox.signature("Brand").unwrap();
+    assert!(sig.html().is_some_and(|h| h.contains("border-left:3px") && !h.contains("data:")) && sig.pictures().len() == 1);
+}
