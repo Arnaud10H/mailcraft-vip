@@ -125,6 +125,9 @@ fn an_html_signature_keeps_its_own_pictures_by_name_and_stays_in_its_cap() {
     // Its pictures stay, named for the HTML to show them by.
     sig.set_html(Some(format!("<img src=\"cid:{}\"><b>Avery</b>", Signature::picture_cid(id)))).unwrap();
     assert!(sig.html().is_some() && sig.pictures().len() == 1);
+    // Written and opened again (the next start), it is still the same HTML signature.
+    let opened: Signature = serde_json::from_value(serde_json::to_value(&sig).unwrap()).unwrap();
+    assert_eq!(opened, sig);
     assert_eq!(Signature::picture_of_cid(&Signature::picture_cid(id)), Some(id));
     assert_eq!(
         (Signature::picture_of_cid("sig-picture-"), Signature::picture_of_cid("pic-1"), Signature::picture_of_cid(" sig-picture-7 ")),

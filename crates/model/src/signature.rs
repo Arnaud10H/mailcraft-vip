@@ -321,10 +321,9 @@ impl<'de> Deserialize<'de> for Signature {
             }
         }
         sig.tidy();
-        // HTML over the cap is left out, and the signature is its text; one with pictures can't be.
-        if sig.pictures.is_empty() {
-            sig.html = raw.html.filter(|h| h.len() <= MAX_HTML);
-        }
+        // HTML over the cap is left out, and the signature is its text. It keeps its own pictures
+        // (VIP15.3), which `tidy` above keeps too while the text shows them.
+        sig.html = raw.html.filter(|h| h.len() <= MAX_HTML);
         Ok(sig)
     }
 }
