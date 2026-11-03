@@ -366,6 +366,11 @@ fn html(s: &mut Session, v: &Value) -> CmdResult {
         (Some(Value::String(h)), _) => Some(h.clone()),
         // From a file: a signature with its pictures written in is too large for some clipboards.
         (_, Some(_)) => Some(String::from_utf8(super::source(v)?.1).map_err(|_| fail("the file isn't text in UTF-8"))?),
+        // The file's bytes, as an agent hands them over (base64 `data`).
+        (_, None) if p::str(v, "data").is_some() => {
+            let bytes = super::base64_decode(p::str(v, "data").unwrap_or(""))?;
+            Some(String::from_utf8(bytes).map_err(|_| fail("the file isn't text in UTF-8"))?)
+        }
         (Some(Value::Null), None) => None,
         _ => return Err(bad("`html` is the signature's HTML, or null; or `path`, an .html file")),
     };

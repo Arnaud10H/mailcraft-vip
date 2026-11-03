@@ -566,7 +566,7 @@ pub const FILE_PARAMS: &[(&str, &str, FileUse)] = &[
     ("file.importFolderTree", "path", FileUse::Reads { name_key: "name" }),
     ("compose.attach", "path", FileUse::Reads { name_key: "name" }),
     ("compose.html", "path", FileUse::Reads { name_key: "name" }),
-    ("signature.html", "path", FileUse::Reads { name_key: "name" }),
+    ("signature.html", "path", FileUse::Reads { name_key: "file" }),
     ("insert.picture", "path", FileUse::Reads { name_key: "file" }),
     ("signature.picture.add", "path", FileUse::Reads { name_key: "file" }),
     ("file.save", "path", FileUse::Refused),
@@ -1056,6 +1056,11 @@ fn what_it_does(s: &Session, id: &str, params: &Value) -> String {
                 }
                 None => format!("put {} in the Outbox, which sends them", messages_text(s, &ids)),
             }
+        }
+        // A file's HTML is said by its name and size, not shown whole.
+        "signature.html" if params.get("data").is_some_and(|d| !d.is_null()) => {
+            let kb = st("data").len() / 4 * 3 / 1024;
+            format!("make the signature {} the HTML of the file {} ({kb} KB, its pictures with it)", quoted(st("name")), quoted(st("file")))
         }
         "file.import" => "import messages into the Outbox, which sends them".to_string(),
         "mail.delete" | "mail.deletePermanently" => {
