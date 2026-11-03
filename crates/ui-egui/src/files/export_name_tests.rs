@@ -30,13 +30,13 @@ fn save_message_as_suggests_the_name_of_the_message_it_saves() {
 
     app.run("file.exportMessage", json!({"id": saved})).unwrap();
     let want = mailcraft_engine::opening::export_name(&subject, "eml");
-    assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: want });
+    assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: want, dir: None });
 
     // Named by nothing, it is the selected message's.
     app.file_dialog = None;
     app.run("file.exportMessage", json!({})).unwrap();
     let want = mailcraft_engine::opening::export_name(&other, "eml");
-    assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: want });
+    assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: want, dir: None });
 
     // With no subject, or none a file name can keep, it is `message.eml`, as Forward as Attachment
     // and the command name it.
@@ -44,6 +44,6 @@ fn save_message_as_suggests_the_name_of_the_message_it_saves() {
         app.session.mailbox.message_mut(saved).unwrap().subject = subject.into();
         app.file_dialog = None;
         app.run("file.exportMessage", json!({"id": saved})).unwrap();
-        assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: "message.eml".into() }, "{subject:?}");
+        assert_eq!(asked.try_recv().unwrap(), FileDialogRequest::Save { name: "message.eml".into(), dir: None }, "{subject:?}");
     }
 }

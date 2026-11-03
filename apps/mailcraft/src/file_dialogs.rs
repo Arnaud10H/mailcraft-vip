@@ -51,10 +51,15 @@ impl Launcher {
         while let Ok((req, answer)) = self.queue.try_recv() {
             // Built here, on the UI thread: macOS shows the panel as a sheet on the window now.
             let dialog = rfd::AsyncFileDialog::new().set_parent(parent);
+            // Where the last dialog ended, while that folder is still there.
+            let start = |d: rfd::AsyncFileDialog, dir: Option<String>| match dir.filter(|dir| std::path::Path::new(dir).is_dir()) {
+                Some(dir) => d.set_directory(dir),
+                None => d,
+            };
             let picking: Picking = match req {
-                FileDialogRequest::Open { purpose } => Box::pin(open_filters(dialog, &purpose).pick_file()),
-                FileDialogRequest::Folder => Box::pin(dialog.pick_folder()),
-                FileDialogRequest::Save { name } => Box::pin(dialog.set_file_name(name).save_file()),
+                FileDialogRequest::Open { purpose, dir } => Box::pin(open_filters(start(dialog, dir), &purpose).pick_file()),
+                FileDialogRequest::Folder { dir } => Box::pin(start(dialog, dir).pick_folder()),
+                FileDialogRequest::Save { name, dir } => Box::pin(start(dialog, dir).set_file_name(name).save_file()),
             };
             let ctx = self.ctx.clone();
             let waiting = std::thread::Builder::new().name("file dialog".into()).spawn(move || {

@@ -92,6 +92,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"index": number, "id"?: number, "path"?: string} — without a path, answers the bytes as base64 `data`"#)
             .selection(needs_message),
+        CommandSpec::new("mail.saveAllAttachments", "Save All Attachments", "Attachments › Actions", save_all_attachments)
+            .pure()
+            .params(r#"{"path": string (a folder), "id"?: number} — every file the message lists, under its own name; a name already in the folder gets ` (2)`, ` (3)`… rather than being written over"#)
+            .selection(needs_message),
         CommandSpec::new("mail.removeAttachment", "Remove Attachment", "Attachments › Actions", remove_attachment)
             .params(r#"{"index": number, "id"?: number}"#)
             .selection(needs_message),
@@ -925,6 +929,50 @@ fn save_attachment(s: &mut Session, v: &Value) -> CmdResult {
         crate::mark::mark_from_internet(std::path::Path::new(path));
     }
     Ok(out)
+}
+
+fn save_all_attachments(s: &mut Session, v: &Value) -> CmdResult {
+    let id = p::id(v, "id").or(s.sel.focus()).ok_or_else(|| fail("select a message first"))?;
+    let dir = p::req_str(v, "path")?.to_string();
+    let m = s.mailbox.message(id).ok_or_else(|| failed!("no message with id {id}", id))?;
+    let files: Vec<(usize, String)> = m.listed_attachments().map(|(i, a)| (i, crate::opening::save_name(&a.name))).collect();
+    if files.is_empty() {
+        return Err(fail("the message has no attachments"));
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (dir, files);
+        Err(fail("the browser saves attachments one at a time"))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::path::Path::new(&dir);
+        if !dir.is_dir() {
+            return Err(failed!("{path} is not a folder", path = dir.display().to_string()));
+        }
+        let mut saved = Vec::new();
+        for (index, name) in files {
+            let bytes = s.content(id, crate::Part::Attachment(index))?;
+            let path = free_name(dir, &name);
+            std::fs::write(&path, bytes.as_ref()).map_err(|e| fail(format!("{}: {e}", path.display())))?;
+            crate::mark::mark_from_internet(&path);
+            saved.push(path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+        }
+        Ok(json!({"path": dir.display().to_string(), "saved": saved}))
+    }
+}
+
+/// `name` in `dir`, or `stem (2).ext`, `stem (3).ext`… when a file already has it.
+#[cfg(not(target_arch = "wasm32"))]
+fn free_name(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (name, String::new()),
+    };
+    (1..)
+        .map(|n| dir.join(if n == 1 { name.to_string() } else { format!("{stem} ({n}){ext}") }))
+        .find(|path| !path.exists())
+        .unwrap_or_else(|| dir.join(name))
 }
 
 /// The window opens attachments (through its host); everywhere else this says why nothing was

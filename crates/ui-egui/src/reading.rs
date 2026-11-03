@@ -543,6 +543,7 @@ fn attachments(app: &mut MailApp, ui: &mut Ui, m: &Message, t: &Tokens) {
     if files.is_empty() {
         return;
     }
+    let count = files.len();
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -576,8 +577,13 @@ fn attachments(app: &mut MailApp, ui: &mut Ui, m: &Message, t: &Tokens) {
             resp.context_menu(|ui| {
                 crate::widgets::mi(ui, app, "Open", "mail.openAttachment", json!({"id": m.id, "index": index}));
                 crate::widgets::mi(ui, app, "Save As…", "mail.saveAttachment", json!({"id": m.id, "index": index}));
+                crate::widgets::mi(ui, app, "Save All Attachments…", "mail.saveAllAttachments", json!({"id": m.id}));
                 crate::widgets::mi(ui, app, "Remove Attachment", "mail.removeAttachment", json!({"id": m.id, "index": index}));
             });
+        }
+        // Several files: all of them into a folder at once.
+        if count > 1 && m.id != 0 && ui.add(egui::Button::new(tl!("Save All…")).min_size(vec2(0.0, 38.0))).on_hover_text(tl!("Save every attachment into a folder")).clicked() {
+            let _ = app.run("mail.saveAllAttachments", json!({"id": m.id}));
         }
     });
 }

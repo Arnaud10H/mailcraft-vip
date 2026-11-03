@@ -315,6 +315,24 @@ fn attachments_come_and_go() {
 }
 
 #[test]
+fn every_attachment_is_saved_into_a_folder_and_nothing_is_written_over() {
+    let mut s = session();
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example"}));
+    run(&mut s, "compose.attach", json!({"name": "notes.txt", "data": "aGVsbG8="}));
+    run(&mut s, "compose.attach", json!({"name": "photo.jpg", "data": "aGk="}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let dir = std::env::temp_dir().join(format!("mailcraft-save-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), b"mine").unwrap();
+    let r = run(&mut s, "mail.saveAllAttachments", json!({"id": id, "path": dir.to_string_lossy()}));
+    assert_eq!(r["saved"], json!(["notes (2).txt", "photo.jpg"]));
+    assert_eq!(std::fs::read(dir.join("notes.txt")).unwrap(), b"mine");
+    assert_eq!(std::fs::read(dir.join("notes (2).txt")).unwrap(), b"hello");
+    assert!(s.run("mail.saveAllAttachments", &json!({"id": id, "path": dir.join("photo.jpg").to_string_lossy()})).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn saved_attachments_and_exports_are_named_safely() {
     let mut s = session();
     let id = first(&mut s);

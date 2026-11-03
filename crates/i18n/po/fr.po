@@ -14916,3 +14916,21 @@ msgstr "« {subject} » est introuvable sur son serveur, il ne peut donc pas êt
 #~ msgid "Updating the calendar and contacts…"
 #~ msgstr "Mise à jour du calendrier et des contacts…"
 
+
+msgid "Save All…"
+msgstr "Tout enregistrer…"
+
+msgid "Save All Attachments…"
+msgstr "Enregistrer toutes les pièces jointes…"
+
+msgid "Save All Attachments"
+msgstr "Enregistrer toutes les pièces jointes"
+
+msgid "Save every attachment into a folder"
+msgstr "Enregistrer toutes les pièces jointes dans un dossier"
+
+msgid "Saved {count} attachments in {folder}"
+msgstr "{count} pièces jointes enregistrées dans {folder}"
+
+msgid "HTML as Written"
+msgstr "HTML tel quel"

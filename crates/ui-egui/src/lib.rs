@@ -775,6 +775,9 @@ pub struct UiState {
     pub collapsed_folders: Vec<Id>,
     /// Mailbox files opened lately, most recent first.
     pub recent: Vec<String>,
+    /// The folder the last file dialog ended in, where the next one opens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_dir: Option<String>,
     /// The application (client) id Microsoft knows this installation by, for accounts that sign
     /// in on Microsoft's page and name none of their own. An identifier, not a secret.
     pub microsoft_client_id: String,
@@ -851,6 +854,7 @@ impl Default for UiState {
             sync_panel_height: 0.0,
             collapsed_folders: Vec::new(),
             recent: Vec::new(),
+            last_dir: None,
             microsoft_client_id: String::new(),
             remember_sign_in: true,
             sign_ins_bound: false,

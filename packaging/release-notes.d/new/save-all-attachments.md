@@ -1,0 +1,1 @@
+- **Save all of a message's attachments at once.** "Save All…" beside the attachments (or Save All Attachments… in an attachment's menu) asks for a folder and saves every file there, a name already in it getting " (2)" rather than being written over. File dialogs now open in the folder the last one ended in.

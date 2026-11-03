@@ -21,11 +21,11 @@ use crate::MailApp;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileDialogRequest {
     /// Pick a file to open; `purpose` says what for (`mailbox`, `import`, `attach`).
-    Open { purpose: String },
-    /// Pick a folder (to import the mbox files under it).
-    Folder,
+    Open { purpose: String, dir: Option<String> },
+    /// Pick a folder (to import the mbox files under it, to save attachments into).
+    Folder { dir: Option<String> },
     /// Pick a path to save to, given a suggested file name.
-    Save { name: String },
+    Save { name: String, dir: Option<String> },
 }
 
 /// What to do with the path picked in a dialog.
@@ -82,7 +82,8 @@ pub(crate) fn intercept(app: &mut MailApp, id: &str, params: &Value) -> Option<R
     if id == "file.importFolderTree" && params.get("path").is_none() && params.get("entries").is_none() && params.get("staged").is_none() {
         // A host that can't ask for a folder lets the command say what it needs.
         app.services.file_dialog.as_ref()?;
-        return Some(ask(app, FileDialogRequest::Folder, AfterPick::Tree));
+        let dir = app.ui.last_dir.clone();
+        return Some(ask(app, FileDialogRequest::Folder { dir }, AfterPick::Tree));
     }
     if params.get("path").is_none() && params.get("data").is_none() {
         let purpose = match id {
@@ -101,13 +102,20 @@ pub(crate) fn intercept(app: &mut MailApp, id: &str, params: &Value) -> Option<R
     if params.get("path").is_some() || !app.enabled(id) {
         return None;
     }
+    // All of a message's attachments: into a folder.
+    if id == "mail.saveAllAttachments" {
+        app.services.file_dialog.as_ref()?;
+        let dir = app.ui.last_dir.clone();
+        return Some(ask(app, FileDialogRequest::Folder { dir }, AfterPick::Export { command: id.to_string(), params: params.clone() }));
+    }
     let name = export_name(app, id, params)?;
     if app.services.download.is_some() {
         return Some(download(app, id, params.clone()));
     }
     // No way to ask: let the command answer with its bytes (scripts, tests).
     app.services.file_dialog.as_ref()?;
-    Some(ask(app, FileDialogRequest::Save { name }, AfterPick::Export { command: id.to_string(), params: params.clone() }))
+    let dir = app.ui.last_dir.clone();
+    Some(ask(app, FileDialogRequest::Save { name, dir }, AfterPick::Export { command: id.to_string(), params: params.clone() }))
 }
 
 /// Run an export without a path and hand its bytes to the browser.
@@ -128,7 +136,8 @@ pub(crate) fn open(app: &mut MailApp, purpose: &str) {
         app.pending_open = Some(purpose.to_string());
         return;
     }
-    let _ = ask(app, FileDialogRequest::Open { purpose: purpose.to_string() }, AfterPick::Open(purpose.to_string()));
+    let dir = app.ui.last_dir.clone();
+    let _ = ask(app, FileDialogRequest::Open { purpose: purpose.to_string(), dir }, AfterPick::Open(purpose.to_string()));
 }
 
 fn ask(app: &mut MailApp, req: FileDialogRequest, after: AfterPick) -> Result<Value, String> {
@@ -157,6 +166,12 @@ pub(crate) fn poll(app: &mut MailApp) -> Option<Result<Value, String>> {
     };
     let d = app.file_dialog.take()?;
     let Some(path) = picked else { return Some(Ok(json!({"cancelled": true}))) };
+    // The next dialog opens where this one ended (kept with the window's state).
+    let picked_dir = std::path::Path::new(&path);
+    let dir = if picked_dir.is_dir() { Some(picked_dir) } else { picked_dir.parent() };
+    if let Some(dir) = dir.filter(|d| !d.as_os_str().is_empty()) {
+        app.ui.last_dir = Some(dir.to_string_lossy().to_string());
+    }
     let r = match d.after {
         AfterPick::Open(purpose) => opened_path(app, &purpose, &path),
         AfterPick::Tree => app.run("ui.dialog", json!({"name": "importTree", "path": path})),
@@ -171,6 +186,8 @@ pub(crate) fn poll(app: &mut MailApp) -> Option<Result<Value, String>> {
                 if matches!(app.dialog, Some(crate::dialogs::Dialog::ReportProblem(_))) {
                     app.dialog = None;
                 }
+            } else if let Some(saved) = r.as_ref().ok().and_then(|v| v.get("saved")).and_then(Value::as_array).map(Vec::len) {
+                app.status(crate::i18n::fmt(tl!("Saved {count} attachments in {folder}"), &[("count", &saved.to_string()), ("folder", &path)]));
             } else if r.is_ok() {
                 let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 app.status(crate::i18n::fmt(tl!("Saved {name}"), &[("name", &name)]));
@@ -293,7 +310,7 @@ pub(crate) fn save_opened(app: &mut MailApp, window: u64, m: &mailcraft_model::M
     }
     let _ = ask(
         app,
-        FileDialogRequest::Save { name },
+        FileDialogRequest::Save { name, dir: app.ui.last_dir.clone() },
         AfterPick::Export { command: "ui.saveWindowMessage".to_string(), params: json!({"window": window}) },
     );
 }
