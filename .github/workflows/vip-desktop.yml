@@ -1,0 +1,180 @@
+name: VIP desktop
+
+# MailCraft VIP for macOS and Windows, built when a version is promoted to Prod (VIP only, not
+# upstream's). promote-prod on JeanClaude pushes a tag `desk-prod-<version>` to the GitHub mirror;
+# this builds, as dev (the app never offers UCS's updates, which lack the VIP features):
+#   mailcraft-vip-macos-universal.zip       MailCraft VIP.app, Apple Silicon and Intel, ad-hoc signed
+#   mailcraft-vip-windows-<arch>.msi        per-machine installer (Program Files), x64 and arm64
+#   mailcraft-vip-windows-<arch>.zip        portable (mailcraft.exe + mailcraft-cli.exe + VERSION)
+# and attaches them to a release of that tag. JeanClaude downloads them and publishes them on the
+# Prod channel of artisan-digital.eu (mailcraft-channels/desktop-publish.zsh), where the Macs and
+# PCs install from (install-mailcraft-mac.sh, install-mailcraft-win.ps1). No secret is used here:
+# nothing is signed with a real identity. (The tag doesn't start with `v`: upstream's release
+# workflow is not set off.)
+
+on:
+  push:
+    tags: ['desk-prod-*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (as in .version-prod, e.g. 0.8.2-vip-ucs.20261103.9adb936)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vip-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  MAILCRAFT_BUILD_SHA: dev
+  WIX_VERSION: "5.0.2"
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="${INPUT_VERSION:-${REF_NAME#desk-prod-}}"
+          case "$v" in *[!A-Za-z0-9._-]*|"") echo "::error::bad version '$v'"; exit 1 ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS universal
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Build the app (ad-hoc signed)
+        run: bash packaging/macos/package.sh --arch universal
+      - name: Pack MailCraft VIP.app
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          app=$(find target -maxdepth 4 -type d -path '*macos-package/MailCraft.app' | head -1)
+          [ -n "$app" ] || { echo "::error::MailCraft.app not found"; exit 1; }
+          codesign --verify --deep --strict "$app"
+          lipo -info "$app/Contents/MacOS/MailCraft"
+          out=$RUNNER_TEMP/pack; rm -rf "$out"; mkdir -p "$out" upload
+          ditto "$app" "$out/MailCraft VIP.app"
+          echo "$VER" > "$out/VERSION"
+          (cd "$out" && ditto -c -k --keepParent "MailCraft VIP.app" app.zip && zip -q app.zip VERSION)
+          mv "$out/app.zip" upload/mailcraft-vip-macos-universal.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vip-macos
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, target: x86_64-pc-windows-msvc }
+          - { arch: arm64, target: aarch64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      # WiX 5.0.2 and its two extensions, each checked against its pinned SHA-256 before install
+      # (the same pins as upstream's package.yml).
+      - name: Install WiX and its dialog and shell extensions
+        shell: pwsh
+        run: |
+          $pins = @{
+            'wix'                    = 'f30ef0c74e2a986126539c5780be93ac24e8136eaf723b1937b26272703ae173'
+            'wixtoolset.ui.wixext'   = '5ef2c707614b9f70b6bbadd2d4abcb4124efee215e9b16bfbc80113079a604c7'
+            'wixtoolset.util.wixext' = 'dda1cc1b4d3b2305b1246f167c6af6fcded5000be84b3bbff3dda4f442bf4740'
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'wix-nupkg'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($id in $pins.Keys) {
+            $file = Join-Path $dir "$id.$env:WIX_VERSION.nupkg"
+            Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$id/$env:WIX_VERSION/$id.$env:WIX_VERSION.nupkg" -OutFile $file
+            $got = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLowerInvariant()
+            if ($got -ne $pins[$id]) { throw "$id $env:WIX_VERSION does not match its pinned sha256 (got $got)" }
+          }
+          dotnet tool install --global wix --version $env:WIX_VERSION --add-source $dir
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet tool install wix failed' }
+          wix extension add -g "WixToolset.UI.wixext/$env:WIX_VERSION" "WixToolset.Util.wixext/$env:WIX_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'wix extension add failed' }
+      - name: Build and package (unsigned MSI and portable zip)
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
+      - name: Rename for the VIP channel
+        shell: pwsh
+        env:
+          VER: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          New-Item -ItemType Directory -Force -Path upload | Out-Null
+          $msi = Get-Item dist/release/*-windows-$env:ARCH.msi
+          $zip = Get-Item dist/release/*-windows-$env:ARCH-portable.zip
+          Copy-Item $msi.FullName "upload/mailcraft-vip-windows-$env:ARCH.msi"
+          # The portable zip, with the VIP version written into it (what the updater compares).
+          $x = Join-Path $env:RUNNER_TEMP "portable-$env:ARCH"
+          Remove-Item -Recurse -Force $x -ErrorAction SilentlyContinue
+          Expand-Archive $zip.FullName -DestinationPath $x
+          $exe = Get-ChildItem $x -Recurse -Filter mailcraft.exe | Select-Object -First 1
+          if (-not $exe) { throw 'mailcraft.exe missing from the portable zip' }
+          Set-Content -Path (Join-Path $exe.DirectoryName 'VERSION') -Value $env:VER -NoNewline
+          Compress-Archive -Path (Join-Path $exe.DirectoryName '*') -DestinationPath "upload/mailcraft-vip-windows-$env:ARCH.zip"
+          if ($env:ARCH -eq 'x64') { & $exe.FullName.Replace('mailcraft.exe', 'mailcraft-cli.exe') --version }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vip-windows-${{ matrix.arch }}
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Release of the tag
+    needs: [version, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vip-*
+          path: files
+          merge-multiple: true
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          ls -l files
+          (cd files && sha256sum * > SHA256SUMS-desktop.txt)
+          tag="desk-prod-$VER"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "MailCraft VIP $VER (macOS, Windows)" \
+            --notes "Prod $VER. macOS universal (ad-hoc signed), Windows x64 and arm64 (unsigned MSI and portable zip)." --target "$GITHUB_SHA"
+          gh release upload "$tag" files/* --clobber
