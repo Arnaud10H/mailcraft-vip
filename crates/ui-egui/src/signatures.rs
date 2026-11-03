@@ -269,7 +269,8 @@ fn html_source(app: &mut MailApp, ui: &mut Ui, t: &Tokens, mut source: String) {
         .code_editor()
         .desired_rows(10)
         .desired_width(f32::INFINITY)
-        .char_limit(MAX_HTML)
+        // Pictures written in (data:) come in with it before they become the signature's own.
+        .char_limit(MAX_HTML + MAX_PICTURES_BYTES / 3 * 4 + 4096)
         .hint_text(tl!("Paste or write the signature's HTML"));
     if crate::text_menu::field(ui.add(edit)).changed()
         && let Err(why) = app.execute("signature.html", json!({"html": source}))
@@ -461,7 +462,11 @@ fn preview(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
     let message = match kept.filter(|(k, _)| *k == hash) {
         Some((_, m)) => m,
         None => {
-            let cid = |p: &mailcraft_model::signature::Picture| format!("sig-{}@preview.invalid", p.id);
+            // An HTML signature names its own pictures by their name of its own.
+            let html_sig = sig.html().is_some();
+            let cid = |p: &mailcraft_model::signature::Picture| {
+                if html_sig { mailcraft_model::signature::Signature::picture_cid(p.id) } else { format!("sig-{}@preview.invalid", p.id) }
+            };
             // An HTML signature as it is sent: cleaned.
             let signature = sig.html().map_or_else(|| mailcraft_engine::mime::rich::signature_html(&sig, &cid), mailcraft_engine::html::quotable);
             let html = format!("<p>{}</p>\r\n{signature}", tl!("Thanks, Thursday at ten works for me. I'll bring the drawings."));
