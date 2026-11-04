@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .key("Mod+N")
             .params(
-                r#"{"to"?: string, "cc"?: string, "bcc"?: string, "subject"?: string, "body"?: string, "account"?: number, "mailto"?: string (a mailto: link: its recipients, subject and body start the message, and nothing else in it is used)}"#,
+                r#"{"to"?: string, "cc"?: string, "bcc"?: string, "subject"?: string, "body"?: string, "account"?: number, "html"?: string (a message written in HTML elsewhere, taken as compose.html takes it), "mailto"?: string (a mailto: link: its recipients, subject, body and html start the message, and nothing else in it is used)}"#,
             ),
         CommandSpec::new("mail.reply", "Reply", "Home › Respond", reply).pure().key("Mod+R").params(SOURCE).selection(needs_message),
         CommandSpec::new("mail.replyAll", "Reply All", "Home › Respond", reply_all).pure().key("Mod+Shift+R").params(SOURCE).selection(needs_message),
@@ -176,6 +176,7 @@ fn new(s: &mut Session, v: &Value) -> CmdResult {
     };
     let text = |key: &str, linked: String| p::str(v, key).map_or(linked, str::to_string);
     let body = text("body", link.body);
+    let html = text("html", link.html);
     let sig = chosen_signature(s, account, None, false);
     let mut c = Compose {
         mode: ComposeMode::New,
@@ -194,6 +195,13 @@ fn new(s: &mut Session, v: &Value) -> CmdResult {
     }
     s.compose = Some(c);
     s.view.module = crate::Module::Mail;
+    // HTML written elsewhere goes in as `compose.html` takes it (cleaned, sent as written); when it
+    // can't, the message keeps its plain text and says why.
+    if !html.trim().is_empty()
+        && let Err(e) = written(s, &json!({"html": html}))
+    {
+        return Ok(json!({"composing": true, "written": false, "why": e.to_string()}));
+    }
     Ok(json!({"composing": true}))
 }
 

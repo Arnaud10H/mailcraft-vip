@@ -339,9 +339,11 @@ An `.eml`, `.mbox`, `.ics`, `.vcf` or `.mailcraft` file from somewhere else.
   start (a second click, a `mailto:` link, a file opened from the file manager) connects only to
   loopback, sends the key and what it was started with, and exits; a key is compared in constant
   time, and a line without the right one changes nothing. What is handed over is hostile input:
-  one line of at most 1 MB, at most 256 things of at most 32 KB each, and each kept only when it
+  one line of at most 1 MB, at most 256 things of at most 64 KB each, and each kept only when it
   is a `mailto:` link (which the compose command reads as RFC 6068 says, taking only the
-  recipients, the subject and the body, without line breaks in a header) or the whole path of a
+  recipients, the subject and the body, without line breaks in a header, and MailCraft's own
+  `html` field, a body written elsewhere that goes through `compose.html` like any HTML pasted
+  in: nothing that runs, embeds or tracks is kept, and the owner sees it before it is sent) or the whole path of a
   message, calendar, contact, mbox or `.mailcraft` file that is there and can be read, at most 32
   message files at a time; anything else is dropped, and only how many is logged. A file is opened
   once, without waiting (`O_NONBLOCK` on Unix), checked through that handle to be a regular file
@@ -532,3 +534,4 @@ settings files (`crates/engine/src/store.rs`); commands from the control channel
 | 2026-10-23 | minor | Always-download pictures need the server's `dmarc=pass`, ASCII addresses, and Junk subfolders count as Junk; an invitation changes a local meeting only for its organizer, whose address is shown; the update question names installing; the log keeps no subjects, addresses or folder names |
 | 2026-10-22 | minor | `--control-agents-only`: every control request is an agent's, allowed nothing in advance; the mailbox file and `mailcraft-cli` stay within reach of an agent running as the owner |
 | 2026-10-28 | minor | A message's `<style>` blocks are read for the style whitelist by a reader of our own, within caps and fuzzed; nothing in a sheet is run or fetched (#598) |
+| 2026-11-04 | minor | A `mailto:` link may carry `html`, a body written elsewhere, taken as `compose.html` takes HTML (cleaned, shown before sending); a handed-over thing may be 64 KB, as long as a link is read |

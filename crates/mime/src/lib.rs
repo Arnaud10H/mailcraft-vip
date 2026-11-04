@@ -17,6 +17,8 @@ mod address;
 mod charset;
 mod header;
 mod mailto;
+#[cfg(test)]
+mod mailto_html_tests;
 mod mbox;
 mod media;
 mod parse;

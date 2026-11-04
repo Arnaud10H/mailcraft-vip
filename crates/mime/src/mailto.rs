@@ -3,7 +3,8 @@
 //! `mailto:` links (RFC 6068): who a new message is for and how it starts.
 //!
 //! A link is hostile input like any other: it comes from a web page, a document or a message.
-//! Only the recipients, the subject and the body are taken from it. Every other header field a
+//! Only the recipients, the subject, the body and a body written in HTML (`html`, MailCraft's own
+//! field: other programs ignore it and keep to `body`) are taken from it. Every other header field a
 //! link names is ignored (RFC 6068 section 7: a link must not get to set headers of its choice),
 //! nothing taken from it can carry a line break into a header, and sizes are capped.
 
@@ -15,6 +16,10 @@ pub struct Mailto {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
+    /// A message written in HTML elsewhere, which the compose command takes as `compose.html`
+    /// takes one: cleaned of anything that runs or tracks, sent as written, `body` its plain-text
+    /// stand-in for the programs that don't read this field. Empty when the link has none.
+    pub html: String,
 }
 
 /// The most of a link that is read.
@@ -48,7 +53,7 @@ pub fn parse_mailto(link: &str) -> Option<Mailto> {
     for address in path.split(',') {
         add(&mut m.to, &decode(address));
     }
-    let (mut subject, mut body) = (None, None);
+    let (mut subject, mut body, mut html) = (None, None, None);
     for field in query.split('&') {
         let (name, value) = field.split_once('=').unwrap_or((field, ""));
         let value = decode(value);
@@ -59,11 +64,13 @@ pub fn parse_mailto(link: &str) -> Option<Mailto> {
             // The first of each counts; a link that repeats one is not to be trusted with the rest.
             "subject" if subject.is_none() => subject = Some(one_line(&value, MAX_SUBJECT)),
             "body" if body.is_none() => body = Some(lines(&value)),
+            "html" if html.is_none() => html = Some(lines(&value)),
             _ => {}
         }
     }
     m.subject = subject.unwrap_or_default();
     m.body = body.unwrap_or_default();
+    m.html = html.unwrap_or_default();
     Some(m)
 }
 

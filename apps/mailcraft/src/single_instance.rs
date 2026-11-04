@@ -47,9 +47,10 @@ use crate::control_server::{keys_match, random_key, write_key_file};
 
 /// Longer lines are refused.
 pub(crate) const MAX_LINE: usize = 1 << 20;
-/// The most things one start can hand over, and the longest of them.
+/// The most things one start can hand over, and the longest of them (a `mailto:` link as long
+/// as the compose command reads, `html` and all).
 pub(crate) const MAX_ARGS: usize = 256;
-pub(crate) const MAX_ARG: usize = 32 * 1024;
+pub(crate) const MAX_ARG: usize = 64 * 1024;
 /// The most message files one start can hand over (each is an import and a window).
 pub(crate) const MAX_MESSAGES: usize = 32;
 /// How long either side waits for the other on the connection.
