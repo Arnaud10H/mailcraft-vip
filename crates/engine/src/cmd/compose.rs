@@ -808,6 +808,14 @@ fn edit_draft(s: &mut Session, v: &Value) -> CmdResult {
         references: m.references.clone(),
         ..Default::default()
     });
+    // A draft written in HTML elsewhere (an .eml brought in, a draft of another program) is HTML
+    // as written, sent whole, as `compose.html` makes it: in rich text it would lose its layout.
+    if let Some(html) = m.body.html.as_deref().filter(|h| !h.trim_start().starts_with(mailcraft_mime::rich::DOCUMENT_HEAD)) {
+        self::written(s, &json!({"html": html}))?;
+        if let Some(c) = s.compose.as_mut() {
+            c.dirty = false;
+        }
+    }
     Ok(json!({"composing": true, "draft": m.id}))
 }
 

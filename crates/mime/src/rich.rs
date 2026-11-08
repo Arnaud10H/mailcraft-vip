@@ -170,10 +170,14 @@ pub fn to_html_document(text: &RichText, below: Option<&str>) -> String {
     document(&to_html(text), below)
 }
 
+/// How every message written here starts its HTML ([`document`]): what tells a draft of ours
+/// from one written elsewhere.
+pub const DOCUMENT_HEAD: &str = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body>";
+
 /// A whole HTML document holding `fragment` (HTML this module wrote), and under it `below` as it
 /// is.
 pub fn document(fragment: &str, below: Option<&str>) -> String {
-    let mut out = String::from("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"></head><body>\r\n");
+    let mut out = format!("{DOCUMENT_HEAD}\r\n");
     out.push_str(fragment);
     if let Some(below) = below {
         out.push_str(below);

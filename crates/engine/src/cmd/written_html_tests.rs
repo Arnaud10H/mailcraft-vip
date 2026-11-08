@@ -119,3 +119,28 @@ fn html_that_ends_with_the_signature_takes_its_place_and_pictures_keep_their_wid
     run(&mut s, "compose.html", json!({"html": html, "signature": true}));
     assert!(s.compose.as_ref().unwrap().body.text().signature().is_some());
 }
+
+#[test]
+fn a_draft_written_elsewhere_is_sent_as_written() {
+    use mailcraft_model::{Body, FolderKind, Message};
+    let mut s = session();
+    let account = s.mailbox.default_account().unwrap().id;
+    let drafts = s.mailbox.folder_of_kind(account, FolderKind::Drafts).unwrap();
+    // An .eml brought in: its HTML laid out with tables, as no rich text writes it.
+    let html = r#"<!doctype html><html><head><meta charset="utf-8"></head><body><table style="background:#16202e"><tr><td style="border-radius:14px">Ce qui presse</td></tr></table></body></html>"#;
+    let draft = Message { account, folder: drafts, draft: true, subject: "Feuille de route".into(), body: Body { text: "Ce qui presse".into(), html: Some(html.into()) }, ..Default::default() };
+    let draft = s.mailbox.add_message(draft).unwrap();
+    run(&mut s, "mail.editDraft", json!({"id": draft}));
+    assert!(s.compose.as_ref().unwrap().written.is_some() && !s.compose.as_ref().unwrap().dirty);
+    run(&mut s, "compose.set", json!({"to": "stan@example.org"}));
+    let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
+    let sent = s.mailbox.message(id).unwrap().body.html.clone().unwrap();
+    assert!(sent.contains("<table") && sent.contains("#16202e") && sent.contains("border-radius"), "{sent}");
+    // A draft written here still opens as text to edit.
+    run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": "Ici"}));
+    run(&mut s, "compose.type", json!({"text": "Bonjour"}));
+    let ours = run(&mut s, "compose.saveDraft", json!({}))["draft"].as_u64().unwrap();
+    run(&mut s, "compose.close", json!({}));
+    run(&mut s, "mail.editDraft", json!({"id": ours}));
+    assert!(s.compose.as_ref().unwrap().written.is_none());
+}
