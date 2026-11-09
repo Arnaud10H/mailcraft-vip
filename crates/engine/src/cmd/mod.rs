@@ -4,21 +4,34 @@
 
 pub mod account;
 #[cfg(test)]
+mod account_order_tests;
+#[cfg(test)]
 mod agent_leaves_compose_tests;
 #[cfg(test)]
+mod agent_owners_message_tests;
+#[cfg(test)]
 mod answered_tests;
+pub mod auto_replies;
+#[cfg(test)]
+mod auto_replies_tests;
 pub mod calendar;
 pub mod calendar_extra;
 pub mod calendar_opened;
 pub mod calendar_settings;
 pub mod category;
+#[cfg(test)]
+mod category_tests;
 pub mod compose;
 #[cfg(test)]
 mod compose_trust_tests;
 #[cfg(test)]
+mod conversation_thread_tests;
+#[cfg(test)]
 mod dav_account_tests;
 pub mod edit;
+mod ews_down;
 pub mod ews_mail;
+mod ews_up;
 #[cfg(test)]
 mod favorites_tests;
 pub mod file;
@@ -36,6 +49,9 @@ mod forward_attachment_tests;
 mod forward_several_tests;
 #[cfg(test)]
 mod full_count_tests;
+pub mod gmail_move;
+#[cfg(test)]
+mod gmail_move_tests;
 pub mod graph_down;
 pub mod graph_drafts;
 pub mod graph_mail;
@@ -43,8 +59,10 @@ pub mod graph_place;
 pub mod graph_send;
 pub mod graph_switch;
 pub mod graph_up;
+pub mod help;
 #[cfg(test)]
 mod hidden_selection_tests;
+pub mod imap_again;
 #[cfg(test)]
 mod imap_outbox_tests;
 mod jmap_down;
@@ -78,14 +96,30 @@ pub mod picture;
 #[cfg(test)]
 mod picture_tests;
 #[cfg(test)]
+mod protected_moves_tests;
+#[cfg(test)]
 mod quote_tests;
+#[cfg(test)]
+mod range_select_tests;
+#[cfg(test)]
+mod read_receipt_tests;
+#[cfg(test)]
+mod refused_delete_tests;
 pub mod remote;
+#[cfg(test)]
+mod reply_to_first_tests;
+#[cfg(test)]
+mod resend_reply_to_tests;
 pub mod rules;
+pub mod rules_remote;
+#[cfg(test)]
+mod rules_remote_tests;
 #[cfg(test)]
 mod search_scope_tests;
 pub mod search_server;
 #[cfg(test)]
 mod search_suggest_tests;
+pub mod send_receive;
 pub mod shared;
 pub mod signature;
 #[cfg(test)]
@@ -95,6 +129,9 @@ pub mod tasks;
 pub mod tasks_remote;
 #[cfg(test)]
 mod tasks_remote_tests;
+#[cfg(test)]
+mod tasks_tests;
+mod thread_ids;
 pub mod view;
 pub mod vip;
 #[cfg(test)]
@@ -122,8 +159,10 @@ use crate::{CmdError, CmdResult, Registry, Session, p};
 pub fn registry() -> Registry {
     let mut v = Vec::new();
     v.extend(file::specs());
+    v.extend(help::specs());
     v.extend(edit::specs());
     v.extend(mail::specs());
+    v.extend(gmail_move::specs());
     v.extend(compose::specs());
     v.extend(format::specs());
     v.extend(picture::specs());
@@ -139,10 +178,13 @@ pub fn registry() -> Registry {
     v.extend(people_merge::specs());
     v.extend(tasks::specs());
     v.extend(rules::specs());
+    v.extend(rules_remote::specs());
     v.extend(junk::specs());
     v.extend(category::specs());
     v.extend(account::specs());
+    v.extend(auto_replies::specs());
     v.extend(offline::specs());
+    v.extend(send_receive::specs());
     v.extend(signature::specs());
     v.extend(graph_mail::specs());
     v.extend(jmap_mail::specs());
@@ -194,9 +236,10 @@ pub(crate) fn needs_compose(s: &Session) -> Option<&'static str> {
     if s.compose.is_none() { Some("no message is being written") } else { None }
 }
 
-/// The messages a command acts on: `ids` / `id` when given, else the selection.
+/// The messages a command acts on: `ids` / `id` when given, else the selection. They are read
+/// strictly ([`p::ids_strict`], #553): named wrongly, they are refused, never taken for the selection.
 pub(crate) fn targets(s: &Session, v: &Value) -> Result<Vec<Id>, CmdError> {
-    named_or_selected(s, p::ids(v))
+    named_or_selected(s, p::ids_strict(v)?)
 }
 
 /// As [`targets`], for Delete and Move: without `ids` / `id`, a message selected by its
@@ -210,12 +253,6 @@ pub(crate) fn targets_whole(s: &mut Session, v: &Value) -> Result<Vec<Id>, CmdEr
     let named = p::ids_strict(v)?;
     let ids = if named.is_some() { named } else { Some(s.acting_on()) };
     named_or_selected(s, ids)
-}
-
-/// As [`targets`], but `ids` / `id` read strictly ([`p::ids_strict`]): for a command whose mistake
-/// reaches other people, which never takes the selection for what a caller named wrongly.
-pub(crate) fn targets_strict(s: &Session, v: &Value) -> Result<Vec<Id>, CmdError> {
-    named_or_selected(s, p::ids_strict(v)?)
 }
 
 /// The messages `named`, else the selected ones; each must be here.
@@ -311,9 +348,11 @@ pub(crate) fn select_after_removal(s: &mut Session, before: &[Row], removed: &[I
     }
 }
 
-/// A message as agents see it in lists.
+/// A message as agents see it in lists. For a message of a Gmail account's Inbox, its
+/// `gmailCategory` too (#911): one of five words this program wrote, not message text, so it isn't
+/// framed as such.
 pub fn message_summary(s: &Session, m: &Message) -> Value {
-    json!({
+    let mut v = json!({
         "id": m.id,
         "folder": m.folder,
         "from": m.from.full(),
@@ -327,7 +366,11 @@ pub fn message_summary(s: &Session, m: &Message) -> Value {
         "categories": m.categories,
         "attachments": m.listed_attachments().map(|(_, a)| a.name.as_str()).collect::<Vec<_>>(),
         "snippet": crate::list::preview(m, 140),
-    })
+    });
+    if let (Some(category), Some(o)) = (m.gmail_category, v.as_object_mut()) {
+        o.insert("gmailCategory".into(), json!(category.code()));
+    }
+    v
 }
 
 /// A message in full.
@@ -378,7 +421,8 @@ pub(crate) fn deliver(v: &Value, name: &str, bytes: Vec<u8>) -> CmdResult {
         Some(path) => {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                std::fs::write(path, &bytes).map_err(|e| fail(format!("{path}: {e}")))?;
+                // From mail: marked as a browser marks a download (AU3-V6).
+                crate::mark::write_from_mail(std::path::Path::new(path), &bytes).map_err(|e| fail(format!("{path}: {e}")))?;
                 Ok(json!({"path": path, "bytes": bytes.len()}))
             }
             #[cfg(target_arch = "wasm32")]

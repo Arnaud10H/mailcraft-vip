@@ -129,6 +129,15 @@ impl<'a> Stream<'a> {
         tcp.set_read_timeout(io).and_then(|()| tcp.set_write_timeout(io))
     }
 
+    /// The DER of the certificate the server showed first (its end-entity certificate), on an
+    /// encrypted connection whose handshake is done: for channel binding.
+    pub(crate) fn server_certificate(&self) -> Option<Vec<u8>> {
+        match &self.io {
+            Io::Plain(_) => None,
+            Io::Tls(tls) => tls.conn.peer_certificates()?.first().map(|c| c.as_ref().to_vec()),
+        }
+    }
+
     /// What every read and write begins with: the flag, and the time the command has had.
     fn before(&mut self, writing: bool) -> std::io::Result<()> {
         if self.cancel.is_some_and(|cancel| cancel.load(Ordering::Relaxed)) {
@@ -222,11 +231,21 @@ pub(crate) fn checked_host(server: &Server) -> Result<String, NetError> {
 /// the host, for error messages and the certificate check. It waits as `patience` says, and for
 /// nothing longer than a mail server is given.
 pub(crate) fn open<'a>(server: &Server, service: Service, patience: &Patience) -> Result<(Stream<'a>, String), NetError> {
+    open_with(server, service, patience, None)
+}
+
+/// [`open`] with TLS settings of the caller's (`None`: the usual ones, `crate::tls`).
+pub(crate) fn open_with<'a>(
+    server: &Server,
+    service: Service,
+    patience: &Patience,
+    tls: Option<Arc<ClientConfig>>,
+) -> Result<(Stream<'a>, String), NetError> {
     let host = checked_host(server)?;
     log::debug!("connecting to {host}:{} ({service:?}, {})", port(server, service), server.security.code());
     let (connect, io) = (patience.connect.min(CONNECT_TIMEOUT), patience.io.min(IO_TIMEOUT));
     let tcp = dial(&host, port(server, service), server.security == Security::None, connect, io)?;
-    let mut stream = if server.security == Security::Tls { secure(tcp, &host)? } else { Stream::over(Io::Plain(tcp)) };
+    let mut stream = if server.security == Security::Tls { secure(tcp, &host, tls)? } else { Stream::over(Io::Plain(tcp)) };
     stream.patience = patience.command.min(COMMAND_TIMEOUT);
     Ok((stream, host))
 }
@@ -241,7 +260,7 @@ pub(crate) fn open_within<'a>(server: &Server, service: Service, connect: Durati
 pub(crate) fn upgrade<'a>(stream: Stream<'a>, host: &str) -> Result<Stream<'a>, NetError> {
     let Stream { io, cancel, patience, .. } = stream;
     let mut secured = match io {
-        Io::Plain(tcp) => secure(tcp, host)?,
+        Io::Plain(tcp) => secure(tcp, host, None)?,
         tls @ Io::Tls(_) => Stream::over(tls),
     };
     (secured.cancel, secured.patience) = (cancel, patience);
@@ -271,30 +290,44 @@ fn dial(host: &str, port: u16, loopback_only: bool, connect: Duration, io: Durat
     Ok(tcp)
 }
 
-/// A TCP connection to the first of `addresses` that answers, all of them within `connect`, or why
+/// Connect using the bounded fallback loop shared with the deterministic regressions.
+fn connect_first(addresses: &[SocketAddr], connect: Duration) -> Result<TcpStream, &'static str> {
+    let started = Instant::now();
+    connect_resolved(addresses, connect, TcpStream::connect_timeout, || started.elapsed())
+}
+
+/// A connection to the first of `addresses` that answers, all of them within `connect`, or why
 /// there is none. Each address gets an equal share of the time left, so one that never answers
 /// (an IPv6 address that goes nowhere, say) can't keep the next from being tried, and one that
-/// fails at once hands its time on.
-fn connect_first(addresses: &[SocketAddr], connect: Duration) -> Result<TcpStream, &'static str> {
-    let deadline = Instant::now() + connect;
+/// fails at once hands its time on. Separated from DNS and socket setup so the bounded deadline
+/// can be tested without public servers, real credentials, or wall-clock sleeps.
+fn connect_resolved<T>(
+    addresses: &[SocketAddr],
+    connect: Duration,
+    mut connector: impl FnMut(&SocketAddr, Duration) -> std::io::Result<T>,
+    elapsed: impl Fn() -> Duration,
+) -> Result<T, &'static str> {
     let mut reason = "no address was found for the name";
-    for (tried, address) in addresses.iter().enumerate() {
-        let left = deadline.saturating_duration_since(Instant::now());
+    let count = addresses.len().min(MAX_ADDRESSES);
+    for (index, address) in addresses.iter().take(count).enumerate() {
+        let left = connect.saturating_sub(elapsed());
         if left.is_zero() {
             reason = "the server didn't answer";
             break;
         }
-        let to_try = u32::try_from(addresses.len().saturating_sub(tried)).unwrap_or(u32::MAX).max(1);
-        // No time at all would be refused rather than tried.
-        let share = (left / to_try).max(Duration::from_millis(1));
-        match TcpStream::connect_timeout(address, share) {
-            Ok(tcp) => return Ok(tcp),
-            Err(e) => {
-                reason = match e.kind() {
+        // One unreachable DNS result must not consume the entire connection deadline. Divide
+        // the remaining budget among the remaining bounded attempts. Fast failures leave their
+        // unused time for the next address; the final address gets all remaining time.
+        let remaining = u32::try_from(count.saturating_sub(index)).unwrap_or(1).max(1);
+        let attempt = (left / remaining).max(Duration::from_nanos(1));
+        match connector(address, attempt) {
+            Ok(connection) => return Ok(connection),
+            Err(error) => {
+                reason = match error.kind() {
                     ErrorKind::ConnectionRefused => "the server refused the connection",
                     ErrorKind::TimedOut | ErrorKind::WouldBlock => "the server didn't answer",
                     _ => "the network couldn't get there",
-                }
+                };
             }
         }
     }
@@ -308,9 +341,12 @@ fn tls_config() -> Result<Arc<ClientConfig>, String> {
 }
 
 /// Shake hands over `tcp` and check the server's certificate against `host`.
-fn secure<'a>(mut tcp: TcpStream, host: &str) -> Result<Stream<'a>, NetError> {
+fn secure<'a>(mut tcp: TcpStream, host: &str, tls: Option<Arc<ClientConfig>>) -> Result<Stream<'a>, NetError> {
     let failed = |reason: String| NetError::Tls { host: host.to_string(), reason };
-    let config = tls_config().map_err(failed)?;
+    let config = match tls {
+        Some(config) => config,
+        None => tls_config().map_err(failed)?,
+    };
     let name = ServerName::try_from(host.to_string()).map_err(|_| failed("its name isn't one a certificate can be checked against".into()))?;
     let mut connection = ClientConnection::new(config, name).map_err(|e| failed(e.to_string()))?;
     // Shake hands now, so that a bad certificate is reported as one, and within a time limit: no
@@ -432,7 +468,7 @@ mod tests {
         // A name no certificate could be for is refused before anything is sent.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let tcp = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        assert!(matches!(secure(tcp, "not a host name"), Err(NetError::Tls { .. })));
+        assert!(matches!(secure(tcp, "not a host name", None), Err(NetError::Tls { .. })));
     }
 
     /// A server on this machine that does with its one connection what `serve` says.
@@ -592,3 +628,7 @@ mod tests {
         assert!(!reason.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "transport_connect_tests.rs"]
+mod connect_tests;

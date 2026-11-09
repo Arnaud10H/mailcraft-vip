@@ -40,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .pure()
             .params(r#"{"name": string} — the template's text at the cursor, and its subject when there is none yet"#)
             .when(needs_compose),
-        CommandSpec::new("account.automaticReplies", "Automatic Replies", "File › Backstage", auto_reply).params(
+        CommandSpec::new("vip.automaticReplies", "Automatic Replies", "File › Backstage", auto_reply).params(
             r#"{"enabled"?: bool, "message"?: string, "subject"?: string, "start"?: "2026-10-20T08:00"|null, "end"?: same} — answers once each sender of new Inbox mail while on (never lists, bulk or automatic mail); no params: what is set"#,
         ),
         CommandSpec::new("mail.unsubscribe", "Unsubscribe", "Home › Delete", unsubscribe)
@@ -111,8 +111,9 @@ fn add(s: &mut Session, v: &Value) -> CmdResult {
         }
         s.mailbox.vip.senders.push(email.clone());
     }
+    // On the shared list (the one a search and the rules offer).
     if s.mailbox.category(VIP_CATEGORY).is_none() {
-        s.mailbox.set_category(VIP_CATEGORY, Rgb(0xC9, 0x9A, 0x06))?;
+        s.mailbox.set_category(0, VIP_CATEGORY, Rgb(0xC9, 0x9A, 0x06))?;
     }
     let tagged = tag_from(&mut s.mailbox, &email, true);
     Ok(json!({"email": email, "tagged": tagged}))

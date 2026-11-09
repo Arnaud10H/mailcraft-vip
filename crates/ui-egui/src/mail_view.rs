@@ -120,7 +120,8 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         // Hidden: a narrow strip stays, with the button that brings the pane back.
         crate::nav::folder_pane_strip(app, ui);
     }
-    let composing = app.session.compose.is_some();
+    // The reading pane's message being written (#286): one in a window of its own isn't here.
+    let composing = crate::windows::compose_window::pane_compose(app).is_some_and(|c| app.session.compose_id() == Some(c));
     let pane = app.session.view.reading_pane;
     // The list takes the whole width when the reading pane is off, unless a message is being written.
     if pane == Pane::Off && !composing {
@@ -148,11 +149,21 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     }
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.surface)).show(ui, |ui| {
         if composing {
-            crate::compose::show(app, ui);
+            // Each message being written has fields of its own (#286): two never share a caret.
+            let compose = app.session.compose_id();
+            ui.push_id(("compose", compose), |ui| crate::compose::show(app, ui));
         } else {
             crate::reading::show(app, ui);
         }
     });
+    // Enter on a selected draft goes on writing it (#651). Only a new press that is the main
+    // window's, with nothing focused: not a text field's, nor a dialog's.
+    if !composing && app.session.sel.messages.len() == 1 {
+        let draft = app.session.sel.focus().and_then(|id| app.session.mailbox.messages.get(&id)).is_some_and(|m| m.draft);
+        if draft && crate::keys::take_enter_alone(ui.ctx(), ui.layer_id()) {
+            let _ = app.run("mail.editDraft", json!({}));
+        }
+    }
 }
 
 /// A row and the line under it: 72 with one line of preview (15 clear above the sender's
@@ -176,6 +187,20 @@ const ONE_LINE_SENDER_MIN: f32 = 70.0;
 /// not less than 90 or more than 220 (and never more than the room).
 fn one_line_sender_width(room: f32) -> f32 {
     (room / 3.0).clamp(ONE_LINE_SENDER_MIN, 220.0).min(room.max(0.0))
+}
+
+/// What a row gives up with tighter spacing (`view.density`): a single-line row stays centred on
+/// its line, a taller one gives half of it up above the sender and half under its last line.
+const TIGHTER_ONE_LINE: f32 = 6.0;
+const TIGHTER_ROWS: f32 = 10.0;
+
+/// How much shorter a row is with tighter spacing on (`tight`): nothing when it is off.
+fn tightening(tight: bool, one_line: bool) -> f32 {
+    match (tight, one_line) {
+        (false, _) => 0.0,
+        (true, true) => TIGHTER_ONE_LINE,
+        (true, false) => TIGHTER_ROWS,
+    }
 }
 
 /// A group heading of the list in the interface language: the engine's dates (`Today`) are
@@ -499,12 +524,14 @@ fn list(app: &mut MailApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     list_header(app, ui);
+    // Gmail's categories, when they are tabs above a Gmail Inbox's list (#911).
+    crate::gmail_tabs::row(app, ui);
     let rows = app.session.rows();
     search_bar(app, ui, mailcraft_engine::list::listed(&rows));
     // A search covers what is here: of a message not fetched yet, its headers and preview (R3.2).
     if !app.session.view.search.trim().is_empty() {
-        let in_view = mailcraft_engine::list::in_view(&app.session);
-        let partly = app.session.mailbox.messages.values().filter(|m| m.unfetched && in_view(m)).count();
+        // (Counted as the list was built, not at every frame.)
+        let partly = app.session.unfetched_in_view();
         if partly > 0 {
             let said = crate::i18n::fmt(
                 tl!("{count} messages weren't searched in full: only their beginning is here until they download."),
@@ -541,6 +568,7 @@ fn list(app: &mut MailApp, ui: &mut Ui) {
     // The rows of a search on the server keep the height the preview lines ask for.
     let server_h = row_height(app.session.prefs.preview_lines);
     let row_h = if one_line { ONE_LINE_H } else { server_h };
+    let row_h = row_h - tightening(app.session.prefs.tight_spacing, one_line);
     // Below the local results of a search: More results on the server, and what came (R6.2).
     let searching = !app.session.view.search.trim().is_empty();
     let local: std::collections::HashSet<Id> =
@@ -596,7 +624,7 @@ fn list(app: &mut MailApp, ui: &mut Ui) {
     let scrolls = total > outer.height();
     // (A bar that floats over the rows has no lane to paint and no arrows.)
     if scrolls && !overlay {
-        ui.painter().rect_filled(lane, SCROLL_TRACK / 2.0, if t.dark { t.panel } else { t.canvas });
+        ui.painter().rect_filled(lane, SCROLL_TRACK / 2.0, t.lane);
     }
     // The handle keeps clear of the arrows at the ends of its lane (a lane too short for them
     // has none).
@@ -638,27 +666,15 @@ fn list(app: &mut MailApp, ui: &mut Ui) {
                 break;
             }
             if let Some(group) = &row.group {
-                // A box a step lighter than the list (a step darker on a light one), with a line round it.
+                // Text on the list itself: no bar, no box.
                 let gr = Rect::from_min_max(pos2(origin.x + ROW_INSET, origin.y + top - GROUP_H), pos2(origin.x + width, origin.y + top));
-                let fill = t.surface.lerp_to_gamma(t.selection, if t.dark { 1.0 } else { 0.45 });
-                let line = Stroke::new(1.0, t.border_strong);
-                ui.painter().rect_filled(gr, 0.0, fill);
-                // The line under the row above is this box's top edge, except for the first box.
-                let (left, right, bottom) = (gr.min.x + 0.5, gr.max.x - 0.5, gr.max.y - 0.5);
-                let top = if i == 0 { gr.min.y + 0.5 } else { gr.min.y };
-                ui.painter().line_segment([pos2(left, top), pos2(left, gr.max.y)], line);
-                ui.painter().line_segment([pos2(right, top), pos2(right, gr.max.y)], line);
-                ui.painter().line_segment([pos2(gr.min.x, bottom), pos2(gr.max.x, bottom)], line);
-                if i == 0 {
-                    ui.painter().line_segment([pos2(gr.min.x, top), pos2(gr.max.x, top)], line);
-                }
                 paint_clipped(
                     ui.painter(),
-                    pos2(gr.min.x + 10.0, gr.center().y),
-                    gr.width() - 16.0,
+                    pos2(gr.min.x + 16.0, gr.center().y + 3.0),
+                    gr.width() - 22.0,
                     group_name(group, row.category),
                     semibold(GROUP_TEXT),
-                    t.text,
+                    t.group_label,
                 );
             }
             let rect = Rect::from_min_size(pos2(origin.x, origin.y + top), vec2(width, row_h));
@@ -717,62 +733,41 @@ fn shows_folder(s: &mailcraft_engine::Session) -> bool {
 }
 
 /// The previews of the rows the list drew last, so that drawing them again reads no message a
-/// second time. Kept for as long as the mailbox stays as it is.
+/// second time. Each is kept while its message is the one it was made from.
 #[derive(Clone, Default)]
 struct Previews {
-    /// The mailbox's revision the lines were made at.
-    rev: u64,
     /// Per message: what its line was made from, and the line.
     lines: std::collections::HashMap<Id, (PreviewOf, Arc<str>)>,
 }
 
-/// What a preview was made from: where the message and its body are and how long they are (a
-/// body that is written again is somewhere else, or another length), and how much was asked for.
-type PreviewOf = (usize, usize, usize, usize);
+/// What a preview was made from: the message, held weakly, and how much was asked for. A
+/// message is never written on in place while it is held so (`Arc::make_mut` moves it), and its
+/// place can't be taken by another while the line remembers it, so a message changed, however
+/// often while off screen, is never taken for the one the line was made from.
+type PreviewOf = (std::sync::Weak<Message>, usize);
 
 /// Most previews kept: a few screens of rows.
 const MAX_PREVIEWS: usize = 512;
 
 /// The first words of `m` for its row: [`mailcraft_engine::list::preview`], remembered.
-fn preview(ui: &Ui, rev: u64, m: &Arc<Message>, max_chars: usize) -> Arc<str> {
-    let of: PreviewOf = (Arc::as_ptr(m) as usize, m.body.text.len(), m.body.html.as_ref().map_or(0, String::len), max_chars);
+fn preview(ui: &Ui, m: &Arc<Message>, max_chars: usize) -> Arc<str> {
     ui.data_mut(|data| {
         let kept = data.get_temp_mut_or_default::<Previews>(egui::Id::unique("message_list_previews"));
-        if kept.rev != rev || kept.lines.len() > MAX_PREVIEWS {
+        // Kept through changes to the mailbox: a line is made again when its message isn't the
+        // one it was made from (a change to the mailbox every minute, as mail is
+        // looked for, made every row on screen read its message's body again).
+        if kept.lines.len() > MAX_PREVIEWS {
             kept.lines.clear();
-            kept.rev = rev;
         }
         match kept.lines.get(&m.id) {
-            Some((made_of, line)) if *made_of == of => line.clone(),
+            Some(((made_of, chars), line)) if std::ptr::eq(made_of.as_ptr(), Arc::as_ptr(m)) && *chars == max_chars => line.clone(),
             _ => {
                 let line: Arc<str> = mailcraft_engine::list::preview(m, max_chars).into();
-                kept.lines.insert(m.id, (of, line.clone()));
+                kept.lines.insert(m.id, ((Arc::downgrade(m), max_chars), line.clone()));
                 line
             }
         }
     })
-}
-
-/// A line of dots round `r`, one pixel on and one off: the mark of the row the keys act on.
-fn dotted_frame(p: &egui::Painter, r: Rect, color: Color32) {
-    // A dot is a pixel of the screen, on the screen's own grid, so the line stays one of dots
-    // at any scale. They go out as one mesh: shapes this small are smoothed away otherwise.
-    let dot = 1.0 / p.pixels_per_point().max(0.25);
-    let r = egui::emath::GuiRounding::round_to_pixels(r, p.pixels_per_point());
-    let steps = |length: f32| ((length / (2.0 * dot)).ceil() as usize).min(4000);
-    let mut dots = egui::Mesh::default();
-    let mut put = |x: f32, y: f32| dots.add_colored_rect(Rect::from_min_size(pos2(x, y), vec2(dot, dot)), color);
-    for i in 0..steps(r.width()) {
-        let x = r.min.x + i as f32 * 2.0 * dot;
-        put(x, r.min.y);
-        put(x, r.max.y - dot);
-    }
-    for i in 0..steps(r.height()) {
-        let y = r.min.y + i as f32 * 2.0 * dot;
-        put(r.min.x, y);
-        put(r.max.x - dot, y);
-    }
-    p.add(egui::Shape::mesh(dots));
 }
 
 /// Where a message's follow-up flag stands, as its row in the list shows it.
@@ -800,7 +795,7 @@ impl FollowUp {
 /// one's tint, or nothing (the list shows through).
 pub(crate) fn row_fill(t: &Tokens, follow_up: FollowUp, selected: bool, focus: bool) -> Option<Color32> {
     match (selected, follow_up) {
-        (true, _) => Some(if focus { t.selection } else { t.selection.linear_multiply(0.7) }),
+        (true, _) => Some(if focus { t.selection } else { t.selection_unfocused }),
         (false, FollowUp::Flagged | FollowUp::Overdue) => Some(t.flagged_row),
         (false, FollowUp::None) => None,
     }
@@ -811,18 +806,19 @@ pub(crate) fn row_fill(t: &Tokens, follow_up: FollowUp, selected: bool, focus: b
 /// category marks and the size of a conversation at the right of the preview's.
 /// What the list's `rows` draw selected ([`mailcraft_engine::Session::drawn`]), kept while they
 /// and the selection stay as they are: in a large list, working it out goes through every row,
-/// which a frame can't afford (#503).
+/// which a frame can't afford (#503). The rows are held weakly: held, the session would copy
+/// all of them to put one row's unread count right after a read mark.
 fn drawn_selection(app: &mut MailApp, rows: &Arc<Vec<Row>>) -> Arc<Drawn> {
     let sel = &app.session.sel;
     if let Some((was, messages, whole, drawn)) = &app.drawn
-        && Arc::ptr_eq(was, rows)
+        && std::ptr::eq(was.as_ptr(), Arc::as_ptr(rows))
         && *messages == sel.messages
         && *whole == sel.whole
     {
         return drawn.clone();
     }
     let drawn = Arc::new(app.session.drawn(rows));
-    app.drawn = Some((rows.clone(), sel.messages.clone(), sel.whole.clone(), drawn.clone()));
+    app.drawn = Some((Arc::downgrade(rows), sel.messages.clone(), sel.whole.clone(), drawn.clone()));
     drawn
 }
 
@@ -846,6 +842,9 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
     let one = app.session.prefs.one_line;
     let line1 = if one { rect.center().y } else { rect.min.y + SENDER_Y };
     let line2 = if one { rect.center().y } else { rect.min.y + SUBJECT_Y };
+    // With tighter spacing a row's lines move up by half of what it gave up (`view.density`).
+    let lift = tightening(app.session.prefs.tight_spacing, one) / 2.0;
+    let (line1, line2) = if one { (line1, line2) } else { (line1 - lift, line2 - lift) };
     // A conversation's row has an arrow between the read switch and the text (#503): a click opens
     // or closes it, as Right and Left do.
     let conversation = row.conversation();
@@ -887,35 +886,47 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
     let body = Rect::from_min_max(pos2(rect.min.x + ROW_INSET, rect.min.y), pos2(rect.max.x, rect.max.y - 1.0));
     let follow_up = FollowUp::of(&m, &app.session);
     let fill = row_fill(&t, follow_up, selected, focus);
-    if let Some(fill) = fill {
-        p.rect_filled(body, 0.0, fill);
-        if fill == t.flagged_row {
+    // A selected row is a rounded card a little in from the list's edges: its fill and an
+    // accent edge (quieter while the list has no focus); a flag's tint is laid first, so it shows
+    // through the selection rather than being replaced by it.
+    let card = body.shrink2(vec2(4.0, 1.0));
+    let flag_tint = matches!(follow_up, FollowUp::Flagged | FollowUp::Overdue);
+    if flag_tint {
+        if selected {
+            p.rect_filled(card, 6.0, t.flagged_row);
+        } else {
+            p.rect_filled(card, 6.0, t.flagged_row);
             app.hit.add("messageFlagShade", row.id, body);
         }
     }
+    if let (true, Some(fill)) = (selected, fill) {
+        p.rect_filled(card, 6.0, if flag_tint { fill.gamma_multiply(0.72) } else { fill });
+        let edge = if focus { t.selection_edge } else { t.selection_edge_unfocused };
+        p.rect_stroke(card, 6.0, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+    }
     if !selected && (resp.hovered() || read_resp.hovered() || arrow.as_ref().is_some_and(egui::Response::hovered) || quick.is_some()) {
         // The pointer's shade goes over a flagged row's tint.
-        p.rect_filled(body, 0.0, t.hover.linear_multiply(0.6));
+        p.rect_filled(card, 6.0, t.hover_subtle);
     }
     // Past its due date, its text is red.
     let overdue = follow_up == FollowUp::Overdue;
     if overdue {
         app.hit.add("messageOverdue", row.id, body);
     }
-    // Unread wears the bar; under the pointer it widens, and a read message shows a faint one
-    // so the switch can be found.
-    let bar = Rect::from_min_max(body.min, pos2(body.min.x + if read_resp.hovered() { 6.0 } else { 4.0 }, body.max.y));
+    // Unread wears a dot in the accent; under the pointer a read message shows a ring, so the
+    // switch can be found.
+    let dot = pos2(body.min.x + 13.0, line1);
     if unread {
-        p.rect_filled(bar, 0.0, t.accent);
+        p.circle_filled(dot, 4.0, t.accent);
     } else if read_resp.hovered() {
-        p.rect_filled(bar, 0.0, t.accent.linear_multiply(0.4));
+        p.circle_stroke(dot, 3.5, Stroke::new(1.2, t.selection_edge_unfocused));
     }
-    if selected && focus {
-        // The message the keys act on has a line of dots round it.
-        dotted_frame(p, body, t.text_dim);
+    if !selected {
+        p.line_segment([pos2(body.min.x + 12.0, rect.max.y - 0.5), pos2(rect.max.x - 10.0, rect.max.y - 0.5)], Stroke::new(1.0, t.border_faint));
     }
-    let rule = if t.dark { t.border_strong } else { t.border };
-    p.line_segment([pos2(body.min.x, rect.max.y - 0.5), pos2(rect.max.x, rect.max.y - 0.5)], Stroke::new(1.0, rule));
+    // What is in the row is laid out from its top as in a row of the full height, moved up with
+    // its lines (the background and the line under it are the row's own, above).
+    let rect = if one { rect } else { rect.translate(vec2(0.0, -lift)) };
     if let Some(arrow) = &arrow {
         let at = Rect::from_center_size(arrow_rect.center(), vec2(12.0, 12.0));
         icons::paint(p, at, if row.open { "expanded" } else { "collapsed" }, if arrow.hovered() { t.text } else { t.icon }, t.accent);
@@ -953,7 +964,7 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
     let date =
         crate::dates::list_label(mailcraft_engine::list::when(&m), app.session.now(), app.session.offset_at(m.date), app.session.prefs.twelve_hour);
     let (date_font, date_color) = match (unread, overdue) {
-        (true, false) => (semibold(LIST_TEXT), t.accent_text),
+        (true, false) => (semibold(LIST_TEXT), t.text),
         (true, true) => (semibold(LIST_TEXT), t.overdue),
         (false, _) => (regular(LIST_TEXT), if overdue { t.overdue } else { t.text }),
     };
@@ -1064,7 +1075,7 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
         app.hit.add("messageFolder", row.id, Rect::from_min_max(pos2(sx + 6.0, tail_y - 7.0), pos2(end, tail_y + 7.0)));
     }
     for c in m.categories.iter().take(4) {
-        let color = crate::theme::c32(app.session.mailbox.category_color(c));
+        let color = crate::theme::c32(app.session.mailbox.category_color_of(m.account, c));
         p.rect_filled(Rect::from_center_size(pos2(sx - 5.0, tail_y), vec2(10.0, 10.0)), 2.0, color);
         sx -= 13.0;
     }
@@ -1082,7 +1093,7 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
     }
     let subject = if m.subject.trim().is_empty() { tl!("(no subject)") } else { m.subject.as_str() };
     let (sfont, scolor) = match (unread, overdue) {
-        (true, false) => (semibold(LIST_TEXT), t.accent_text),
+        (true, false) => (semibold(LIST_TEXT), t.text),
         (true, true) => (semibold(LIST_TEXT), t.overdue),
         (false, _) => (regular(LIST_TEXT), if overdue { t.overdue } else { t.text }),
     };
@@ -1092,7 +1103,7 @@ fn message_row(app: &mut MailApp, ui: &mut Ui, row: &Row, rect: Rect, drawn: &Dr
     // Then the preview: whole words, as many lines as asked for, and no mark where it stops.
     let preview_end = text_end.min(sx - 6.0);
     if lines > 0 && preview_end - left > 4.0 {
-        let said = preview(ui, app.session.rev(), &m, usize::from(lines) * 200);
+        let said = preview(ui, &m, usize::from(lines) * 200);
         let format =
             egui::text::TextFormat { font_id: regular(LIST_TEXT), color: t.text_dim, line_height: Some(PREVIEW_PITCH), ..Default::default() };
         let mut job = egui::text::LayoutJob::default();
@@ -1145,9 +1156,10 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
     if resp.clicked() {
         let _ = app.run("mail.select", json!({"id": id, "copy": copy, "extend": mods.command, "range": mods.shift}));
     }
-    // A double click opens the message: a draft in the composer, any other in a window of its own.
+    // A double click opens the message in a window of its own: a draft ready to be written in
+    // (#286), any other to read.
     if resp.double_clicked() {
-        let _ = if m.draft { app.run("mail.editDraft", json!({"id": id})) } else { app.run("ui.openWindow", json!({"message": id})) };
+        let _ = app.run("ui.openWindow", json!({"message": id}));
     }
     // A right click on a row outside the selection acts on that row (a conversation's row and
     // its newest message's own row under it are two rows, #503).
@@ -1155,6 +1167,7 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
         let _ = app.execute("mail.select", json!({"id": id, "copy": copy}));
     }
     let (read, flagged, pinned) = (m.read, m.flag == FlagStatus::Flagged, m.pinned);
+    let sent = app.session.mailbox.folder(m.folder).is_some_and(|f| f.kind == mailcraft_model::FolderKind::Sent);
     resp.context_menu(|ui| {
         ui.set_min_width(200.0);
         use crate::widgets::mi;
@@ -1163,10 +1176,14 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
             ui.separator();
         } else {
             mi(ui, app, "Open in a Window", "ui.openWindow", json!({"message": id}));
+            if sent {
+                mi(ui, app, "Resend Message", "mail.resend", json!({}));
+            }
             ui.separator();
         }
         mi(ui, app, "Reply", "mail.reply", json!({}));
         mi(ui, app, "Reply All", "mail.replyAll", json!({}));
+        mi(ui, app, "Reply and Delete", "mail.replyAndDelete", json!({}));
         mi(ui, app, "Forward", "mail.forward", json!({}));
         mi(ui, app, "Forward as Attachment", "mail.forwardAsAttachment", json!({}));
         ui.separator();
@@ -1175,9 +1192,13 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
         mi(ui, app, if pinned { "Unpin" } else { "Pin" }, "mail.pin", json!({}));
         ui.menu_button(tl!("Categorize"), |ui| {
             let ids = app.session.sel.messages.clone();
+            let accounts = crate::ribbon::selected_accounts(app);
+            let carried = crate::ribbon::selected_categories(app);
             crate::ribbon::category_menu(
                 ui,
                 app,
+                &accounts,
+                &carried,
                 "mail.categorize",
                 |app, name| ids.iter().all(|id| app.session.mailbox.message(*id).is_some_and(|m| m.has_category(name))),
                 Some("mail.clearCategories"),
@@ -1193,6 +1214,8 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
                 });
             });
         });
+        // Gmail's categories, for mail of a Gmail Inbox, where moves between them are on (#911).
+        crate::gmail_move::menu(app, ui);
         mi(ui, app, "Archive", "mail.archive", json!({}));
         ui.menu_button(tl!("Junk"), |ui| crate::ribbon::junk_menu(ui, app));
         mi(ui, app, "Delete", "mail.delete", json!({}));
@@ -1202,9 +1225,12 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
         mi(ui, app, "Find Related Messages", "mail.findRelated", json!({}));
         mi(ui, app, "Messages from Sender", "mail.findFromSender", json!({"id": id}));
         mi(ui, app, "Save Message As…", "file.exportMessage", json!({}));
+        mi(ui, app, "View Source", "mail.viewSource", json!({}));
     });
 }
 
+#[cfg(test)]
+mod density_tests;
 #[cfg(test)]
 mod focus_stays_tests;
 #[cfg(test)]
@@ -1651,16 +1677,23 @@ mod tests {
             .collect();
         egui::__run_test_ui(|ui| {
             for m in &messages {
-                assert_eq!(&*preview(ui, 7, m, 40), format!("Message number {} says hello", m.id).as_str());
+                assert_eq!(&*preview(ui, m, 40), format!("Message number {} says hello", m.id).as_str());
             }
             let kept = ui.data(|data| data.get_temp::<Previews>(egui::Id::unique("message_list_previews"))).unwrap();
             assert!(kept.lines.len() <= MAX_PREVIEWS + 1, "{}", kept.lines.len());
             // Asked again, the same line; asked for less, a shorter one; after a change, a new one.
             let first = messages.last().unwrap();
-            assert!(Arc::ptr_eq(&preview(ui, 7, first, 40), &preview(ui, 7, first, 40)));
-            assert_eq!(preview(ui, 7, first, 14).chars().count(), 15);
+            assert!(Arc::ptr_eq(&preview(ui, first, 40), &preview(ui, first, 40)));
+            assert_eq!(preview(ui, first, 14).chars().count(), 15);
             let changed = Arc::new(Message { body: Body { text: "Other words".into(), html: None }, ..(**first).clone() });
-            assert_eq!(&*preview(ui, 8, &changed, 40), "Other words");
+            assert_eq!(&*preview(ui, &changed, 40), "Other words");
+            // Replaced while off screen, and the message the line was made from let go of: one
+            // with a body of the same length, wherever it is put, has its own line.
+            drop(changed);
+            for words in ["Fresh words", "Third words"] {
+                let again = Arc::new(Message { body: Body { text: words.into(), html: None }, ..(**first).clone() });
+                assert_eq!(&*preview(ui, &again, 40), words);
+            }
         });
     }
 
@@ -1677,7 +1710,7 @@ mod tests {
         a.execute("mail.flag", json!({"ids": [ids[2]]})).unwrap();
         a.execute("mail.flag", json!({"ids": [ids[3]], "due": "2026-10-01"})).unwrap();
         a.execute("mail.complete", json!({"ids": [ids[3]]})).unwrap();
-        let follow_ups: Vec<FollowUp> = ids.iter().map(|id| FollowUp::of(&a.session.mailbox.messages[id], &a.session)).collect();
+        let follow_ups: Vec<FollowUp> = ids.iter().map(|id| FollowUp::of(a.session.mailbox.messages.get(id).unwrap(), &a.session)).collect();
         assert_eq!(follow_ups, [FollowUp::Overdue, FollowUp::Flagged, FollowUp::Flagged, FollowUp::None, FollowUp::None], "due today is not overdue");
         a.execute("mail.select", json!({"id": ids[4]})).unwrap();
         let mut harness = window(a, (1440.0, 900.0));

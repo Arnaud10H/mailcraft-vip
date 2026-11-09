@@ -133,6 +133,7 @@ fn a_rule_that_reads_the_body_reads_one_kept_on_disk() {
         conditions: vec![Condition::BodyContains("quixotic".into())],
         actions: vec![Action::MoveTo(target)],
         stop: false,
+        ..Default::default()
     });
     let said = s.run("rules.run", &json!({"folder": inbox})).unwrap();
     assert_eq!(said["matched"].as_u64(), Some(1));
@@ -225,7 +226,10 @@ fn a_reply_reads_the_text_and_its_pictures_and_a_calendar_part_too_large_is_not_
     let mut m = Message { folder: inbox, subject: "With a picture".into(), from: Address::new("Ada", "ada@example.org"), ..Default::default() };
     m.body.text = long_text(3);
     m.body.html = Some(format!("<html><body><p>{}</p><img src=\"cid:logo@pic.example\"></body></html>", long_text(4)));
-    let logo = Attachment { content_id: "logo@pic.example".into(), ..Attachment::new("logo.png", "image/png", noise(31, 3_001)) };
+    let logo = Attachment {
+        content_id: "logo@pic.example".into(),
+        ..Attachment::new("logo.png", "image/png", [b"\x89PNG\r\n\x1a\n".to_vec(), noise(31, 2_993)].concat())
+    };
     m.attachments.push(logo);
     m.attachments.push(Attachment::new("report.bin", "application/octet-stream", noise(32, 9_003)));
     // An invitation too large to be read, and one that is not.
@@ -421,7 +425,7 @@ fn an_agents_delete_for_good_in_a_search_is_asked_about_what_it_deletes() {
     let (mut s, newer, older) = found_on_disk(&tmp, mailcraft_model::FolderKind::Deleted);
     let asked = asked_then_run(&mut s, "mail.delete", newer, json!({}));
     let gone = [newer, older].into_iter().filter(|id| s.mailbox.message(*id).is_none()).count();
-    assert_eq!((asked.as_str(), gone), ("delete 2 messages (\u{201c}Brewing notes\u{201d}, \u{201c}Brewing notes\u{201d}) for good", 2));
+    assert_eq!((asked.as_str(), gone), ("permanently delete 2 messages (\u{201c}Brewing notes\u{201d}, \u{201c}Brewing notes\u{201d})", 2));
 }
 
 #[test]

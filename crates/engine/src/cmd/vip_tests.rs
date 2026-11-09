@@ -128,8 +128,8 @@ fn templates_fill_a_message() {
 #[test]
 fn automatic_replies_answer_each_sender_once() {
     let (mut s, a) = session();
-    assert!(s.run("account.automaticReplies", &json!({"enabled": true})).is_err());
-    run(&mut s, "account.automaticReplies", json!({"enabled": true, "message": "Absent jusqu'au 3 novembre."}));
+    assert!(s.run("vip.automaticReplies", &json!({"enabled": true})).is_err());
+    run(&mut s, "vip.automaticReplies", json!({"enabled": true, "message": "Absent jusqu'au 3 novembre."}));
     arrive(&mut s, a, from("ada@example.org", "Question"));
     arrive(&mut s, a, from("ada@example.org", "Question 2"));
     arrive(&mut s, a, Message { headers: vec![("List-Id".into(), "<news.example.org>".into())], ..from("news@example.org", "Weekly") });
@@ -139,7 +139,7 @@ fn automatic_replies_answer_each_sender_once() {
     assert_eq!(out[0].subject, "Re: Question");
     assert_eq!(out[0].in_reply_to, "Question@example.org");
     assert!(out[0].headers.iter().any(|(n, v)| n == "Auto-Submitted" && v == "auto-replied"));
-    assert_eq!(run(&mut s, "account.automaticReplies", json!({"enabled": false}))["enabled"], false);
+    assert_eq!(run(&mut s, "vip.automaticReplies", json!({"enabled": false}))["enabled"], false);
 }
 
 #[test]

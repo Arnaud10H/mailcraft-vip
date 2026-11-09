@@ -24,15 +24,23 @@
 pub const AVAILABLE: bool = false;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod cert;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod dav;
 #[cfg(not(target_arch = "wasm32"))]
 mod dns;
 #[cfg(not(target_arch = "wasm32"))]
+mod dns_srv;
+#[cfg(not(target_arch = "wasm32"))]
 mod favorite_paths;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod gmail;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod graph;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod https;
 #[cfg(not(target_arch = "wasm32"))]
 mod kept;
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,6 +49,8 @@ mod kinds;
 pub mod oauth;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pictures;
+#[cfg(not(target_arch = "wasm32"))]
+mod pinned;
 #[cfg(not(target_arch = "wasm32"))]
 mod push;
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,13 +77,30 @@ mod tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
 
+/// A Google mail access token is for Google's IMAP/SMTP servers alone. Never send it to
+/// servers copied from a mailbox file or chosen by a plugin/agent. Loopback is only permitted
+/// inside this crate's synthetic protocol tests.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn google_destination(account: &mailcraft_model::Account, host: &str, expected: &str) -> Result<(), NetError> {
+    if account.oauth.as_ref().is_some_and(|oauth| oauth.provider == mailcraft_model::OAuthProvider::Google) {
+        let name = host.trim().trim_end_matches('.');
+        if !(name.eq_ignore_ascii_case(expected) || (cfg!(test) && name.eq_ignore_ascii_case("127.0.0.1"))) {
+            return Err(NetError::Config("Google OAuth access tokens may only be sent to Google's Gmail IMAP and SMTP servers".into()));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use mailcraft_model::Account;
 
+    pub use crate::cert::{CertificateFault, CertificateInfo, CertificateProblem, describe as describe_certificate};
     pub use crate::dns::{lookup_mx, lookup_mx_at};
+    pub use crate::dns_srv::{SrvTarget, lookup_autodiscover, lookup_autodiscover_at};
+    pub use crate::pinned::pin_check_under_way;
     pub use crate::send::send;
-    pub use crate::sync::{sync, sync_with};
+    pub use crate::sync::{sync, sync_with, token_may_go_to};
 
     /// Whether this build can talk to mail servers.
     pub const AVAILABLE: bool = true;
@@ -108,6 +135,11 @@ mod native {
         /// seconds the service asked to be left alone for, when it said.
         #[error("{text}")]
         Busy { text: String, retry_after: Option<u32> },
+        /// The system does not trust the server's certificate, or it is one nobody may trust
+        /// ([`https`](crate::https)): what setup shows is in it. It holds nothing of the
+        /// certificate in its text.
+        #[error("{0}")]
+        Certificate(Box<CertificateProblem>),
         /// A shared mailbox Microsoft won't open for the owner of the token (#70), by Graph's own
         /// code: asking again by itself changes nothing.
         #[error("{}", .0.said())]
@@ -132,7 +164,7 @@ mod native {
                 NetError::ConsentNeeded(text) => NetError::ConsentNeeded(clean(text)),
                 NetError::Forbidden(text) => NetError::Forbidden(clean(text)),
                 NetError::Busy { text, retry_after } => NetError::Busy { text: clean(text), retry_after },
-                unworded @ (NetError::SignInCancelled | NetError::SignInTimedOut | NetError::SharedRefused(_)) => unworded,
+                unworded @ (NetError::SignInCancelled | NetError::SignInTimedOut | NetError::SharedRefused(_) | NetError::Certificate(_)) => unworded,
             }
         }
 
@@ -148,6 +180,12 @@ mod native {
         /// owner to sign in again the cure.
         pub fn is_refused_sign_in(&self) -> bool {
             matches!(self, NetError::Proto(mailcraft_proto::ProtoError::Auth(_)))
+        }
+
+        /// A Google refresh grant was explicitly revoked or expired; a transient failure
+        /// or a denied browser consent must never make us erase an otherwise usable token.
+        pub fn is_revoked_google_refresh(&self) -> bool {
+            matches!(self, NetError::Proto(mailcraft_proto::ProtoError::Auth(reason)) if reason == crate::oauth::GOOGLE_REFRESH_REVOKED)
         }
 
         /// Whether the other side couldn't be reached or stopped answering, as against an answer

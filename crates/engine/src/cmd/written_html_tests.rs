@@ -35,7 +35,11 @@ fn html_written_elsewhere_is_sent_as_written_with_its_pictures() {
     // Shown whole below an empty text to write in, the signature after it; nothing of it in the text.
     let c = s.compose.as_ref().unwrap();
     assert!(c.written.as_ref().is_some_and(|w| w.text.text().contains("Bonjour Maya")));
-    assert!(c.body.text().text().trim().is_empty() || c.body.text().signature().is_some_and(|sig| sig.text().contains("Avery Quinn")), "{:?}", c.body.text().text());
+    assert!(
+        c.body.text().text().trim().is_empty() || c.body.text().signature().is_some_and(|sig| sig.text().contains("Avery Quinn")),
+        "{:?}",
+        c.body.text().text()
+    );
     run(&mut s, "compose.select", json!({"from": 0}));
     run(&mut s, "compose.type", json!({"text": "Voici notre offre."}));
     let id = run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap();
@@ -108,7 +112,9 @@ fn html_that_ends_with_the_signature_takes_its_place_and_pictures_keep_their_wid
     run(&mut s, "signature.set", json!({"name": "Work", "text": "Avery Quinn\nFounder", "default": true}));
     run(&mut s, "mail.new", json!({"subject": "Offre"}));
     let png = mailcraft_charset::base64::STANDARD.encode(b"\x89PNG\r\n\x1a\nIHDR....");
-    let html = format!(r#"<p>Hello</p><table><tr><td><img src="data:image/png;base64,{png}" width="15"></td><td><b>Avery Quinn</b><br>Founder</td></tr></table>"#);
+    let html = format!(
+        r#"<p>Hello</p><table><tr><td><img src="data:image/png;base64,{png}" width="15"></td><td><b>Avery Quinn</b><br>Founder</td></tr></table>"#
+    );
     run(&mut s, "compose.html", json!({"html": html}));
     let c = s.compose.as_ref().unwrap();
     assert!(c.signature.is_none() && c.body.text().signature().is_none());
@@ -128,7 +134,14 @@ fn a_draft_written_elsewhere_is_sent_as_written() {
     let drafts = s.mailbox.folder_of_kind(account, FolderKind::Drafts).unwrap();
     // An .eml brought in: its HTML laid out with tables, as no rich text writes it.
     let html = r#"<!doctype html><html><head><meta charset="utf-8"></head><body><table style="background:#16202e"><tr><td style="border-radius:14px">Ce qui presse</td></tr></table></body></html>"#;
-    let draft = Message { account, folder: drafts, draft: true, subject: "Feuille de route".into(), body: Body { text: "Ce qui presse".into(), html: Some(html.into()) }, ..Default::default() };
+    let draft = Message {
+        account,
+        folder: drafts,
+        draft: true,
+        subject: "Feuille de route".into(),
+        body: Body { text: "Ce qui presse".into(), html: Some(html.into()) },
+        ..Default::default()
+    };
     let draft = s.mailbox.add_message(draft).unwrap();
     run(&mut s, "mail.editDraft", json!({"id": draft}));
     assert!(s.compose.as_ref().unwrap().written.is_some() && !s.compose.as_ref().unwrap().dirty);

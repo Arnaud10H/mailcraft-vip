@@ -1,6 +1,6 @@
 //! What VIP Mail brought to MailCraft: senders who matter (VIP), message templates, automatic
 //! replies for any server, and reading a newsletter's unsubscribe links. The data lives here; the
-//! commands are `vip.*`, `template.*`, `insert.quickParts`, `account.automaticReplies` and
+//! commands are `vip.*`, `template.*`, `insert.quickParts`, `vip.automaticReplies` and
 //! `mail.unsubscribe` in the engine.
 
 use mailcraft_time::Timestamp;

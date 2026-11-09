@@ -13,7 +13,7 @@ Chaque fonction est une commande. On la retrouve dans le ruban, dans la recherch
 | Relance si pas de réponse | `compose.followUp`, `followup.list` | Message › Indicateurs › Follow Up |
 | Envoi différé | `compose.delay` | Message › Indicateurs › Delay |
 | Modèles de message | `template.save`, `template.remove`, `template.list`, `insert.quickParts` | Message › Inclure › Templates |
-| Réponse automatique (absence), pour tout serveur IMAP | `account.automaticReplies` | Fichier › Infos › Automatic Replies |
+| Réponse automatique (absence), pour tout serveur IMAP (envoyée par cet ordinateur ; les comptes Microsoft ont aussi celle du serveur, `account.automaticReplies`) | `vip.automaticReplies` | Fichier › Infos › Automatic Replies |
 | Désabonnement d'une liste (RFC 2369 / 8058) | `mail.unsubscribe`, `ui.unsubscribe` | Accueil › Indicateurs › Unsubscribe |
 | Compte Nextcloud / CalDAV : tous les agendas et carnets d'adresses du serveur, en lecture et en écriture (créer, déplacer, modifier, supprimer un rendez-vous) | `account.add` (`kind: "dav"`), `account.edit` | Fichier › Ajouter un compte › tuile « Nextcloud or CalDAV » |
 

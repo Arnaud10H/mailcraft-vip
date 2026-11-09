@@ -37,8 +37,18 @@ mod control_server;
 #[cfg(test)]
 mod dav_flow;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+mod desktop_icons;
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
 mod desktop_theme;
 mod diagnostics;
+#[cfg(test)]
+mod ews_mail_flow;
+mod ews_runner;
+mod ews_setup;
+#[cfg(test)]
+mod ews_setup_flow;
+#[cfg(test)]
+mod ews_up_flow;
 #[cfg(test)]
 mod favorites_flow;
 #[cfg(test)]
@@ -67,6 +77,8 @@ mod picture_cache;
 mod quit;
 #[cfg(target_os = "macos")]
 mod quit_macos;
+#[cfg(test)]
+mod rules_job_tests;
 mod secrets;
 mod self_update;
 mod sender_images;
@@ -96,7 +108,7 @@ use mailcraft_model::sync::Tokens;
 use mailcraft_ui_egui::{
     AdminConsentAnswer, AdminConsentRequest, CalendarCheckRequest, CalendarCheckResult, CalendarCheckStep, DavRequest, FreeBusyRequest,
     FreeBusyResult, GraphRequest, GraphResult, MailApp, Services, SettingsUnread, SignInRequest, UiState,
-    window_geometry::{WindowGeometry, take_rescue},
+    window_geometry::{self, WindowGeometry, take_rescue},
 };
 
 /// The app, the restored window geometry until the first frame has checked it, the control
@@ -161,11 +173,26 @@ impl eframe::App for App {
             bar.pump(&mut self.0, ctx);
         }
         self.0.logic(ctx);
+        // Another mailbox file opened in the window (or File › New): the lock follows it (#517).
+        if let Some(guard) = &self.4
+            && !self.0.is_opening()
+        {
+            guard.follow(self.0.session.path.as_deref());
+        }
         self.3.show(frame);
         let prev = self.0.ui.window;
         self.0.ui.window = ctx.input(|i| WindowGeometry::track(prev, i.viewport(), i.viewport_rect().size()));
-        if let Some(pos) = ctx.input(|i| take_rescue(&mut self.1, i.viewport())) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+        // A window restored onto a monitor that is gone is moved onto the main one (#719): the
+        // monitors are asked for only until that check is done.
+        if self.1.is_some() {
+            let monitors = connected_monitors(ctx, frame);
+            if let Some(pos) = ctx.input(|i| take_rescue(&mut self.1, i.viewport(), &monitors)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            }
+        }
+        // A window of its own about to open is put on a monitor that is connected (#286).
+        if self.0.wants_monitors() {
+            self.0.set_monitors(monitors_in_pixels(frame));
         }
         // Pages to open, with the browser brought in front (`browser`).
         open_pages(ctx, frame);
@@ -287,19 +314,6 @@ fn opened_files() -> Option<&'static opened_files::Opened> {
 /// Where the log files live: `logs` in the preferences folder (see `logging`).
 fn log_dir() -> Option<PathBuf> {
     Some(prefs_path()?.parent()?.join("logs"))
-}
-
-/// The switch for testing Exchange server accounts (#252): `MAILCRAFT_EWS=1`. Off, `account.add`
-/// with `kind: "exchange"` and every `sync.ews*` command refuse, and an Exchange server account
-/// already in a mailbox opens, shows its mail and isn't kept in step. (Add Account doesn't offer
-/// them either way yet: its page for them comes later, and will be shown only while this is on.)
-fn ews_switch() -> bool {
-    let on = std::env::var("MAILCRAFT_EWS").is_ok_and(|value| value.trim() == "1");
-    static SAID: std::sync::Once = std::sync::Once::new();
-    if on {
-        SAID.call_once(|| log::info!("Exchange server accounts may be added and kept in step (MAILCRAFT_EWS=1, for testing)"));
-    }
-    on
 }
 
 /// Runs without preferences (`MAILCRAFT_NO_PREFS`, agents' test runs) neither read nor write them,
@@ -450,17 +464,22 @@ fn microsoft_client_id() -> String {
     if id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) { id.to_string() } else { String::new() }
 }
 
-/// The application (client) id of this installation's Google project ("Desktop app" OAuth
-/// client): `MAILCRAFT_GOOGLE_CLIENT_ID` when the app starts, else the one the build was given
-/// under the same name. Empty when there is none: Gmail then takes an app password.
+/// The MailCraft-owned Google Desktop registration. Its built-in client secret is a
+/// public installed-app identifier, NEVER an account's password or OAuth refresh token.
 fn google_client_id() -> String {
-    let built_in = option_env!("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or_default().to_string();
-    let id = std::env::var("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or(built_in);
+    let built_in = option_env!("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or_default();
+    let id = std::env::var("MAILCRAFT_GOOGLE_CLIENT_ID").unwrap_or_else(|_| built_in.into());
     let id = id.trim();
-    if id.len() <= 200 && id.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) { id.to_string() } else { String::new() }
+    if id.len() <= 200 && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')) { id.to_string() } else { String::new() }
 }
 
-/// Open one of Microsoft's pages in the system's browser: whether a browser could be started.
+fn google_client_secret() -> String {
+    let built_in = option_env!("MAILCRAFT_GOOGLE_CLIENT_SECRET").unwrap_or_default();
+    let secret = std::env::var("MAILCRAFT_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| built_in.into());
+    if secret.len() <= 512 && secret.bytes().all(|b| b.is_ascii_graphic()) { secret } else { String::new() }
+}
+
+/// Open one of the provider's pages in the system's browser: whether a browser could be started.
 /// (Made here, rather than through the window's own links, so that a browser that can't be
 /// started is known of, instead of leaving the owner looking at a page that waits.) On Linux and
 /// FreeBSD the window hands the browser its activation token, so that it comes in front
@@ -477,6 +496,39 @@ fn open_in_browser(url: &str) -> bool {
 /// set once as the window is made.
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
 static DESKTOP_THEME: std::sync::OnceLock<desktop_theme::DesktopTheme> = std::sync::OnceLock::new();
+
+/// The monitors connected now, in the points the window's place is in, from the window eframe made
+/// (egui doesn't list them). None while there is no window; where the system lists none, none.
+fn connected_monitors(ctx: &egui::Context, frame: &eframe::Frame) -> Vec<egui::Rect> {
+    let Some(window) = frame.winit_window() else { return Vec::new() };
+    // As egui turns the window's own rect into points (`egui_winit::pixels_per_point`).
+    let pixels_per_point = ctx.zoom_factor() * window.scale_factor() as f32;
+    let listed = window.available_monitors().map(|m| {
+        let (at, size) = (m.position(), m.size());
+        ([at.x, at.y], [size.width, size.height])
+    });
+    window_geometry::monitors_in_points(listed, pixels_per_point)
+}
+
+/// The monitors connected now, in the system's pixels with each one's scale, for the windows of
+/// their own about to open (#286): one space for every monitor, whatever its scale.
+fn monitors_in_pixels(frame: &eframe::Frame) -> Vec<mailcraft_ui_egui::window_places::Monitor> {
+    let Some(window) = frame.winit_window() else { return Vec::new() };
+    window
+        .available_monitors()
+        .take(64)
+        .map(|m| {
+            let (at, size) = (m.position(), m.size());
+            // (In points on macOS, where winit gives each monitor's place by its own scale.)
+            mailcraft_ui_egui::window_places::monitor(
+                [at.x, at.y],
+                [size.width, size.height],
+                m.scale_factor(),
+                mailcraft_ui_egui::window_places::POINTS,
+            )
+        })
+        .collect()
+}
 
 /// The pages waiting for the window's activation token (`browser`), set once before the window opens.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -603,7 +655,10 @@ fn sign_in_with(request: SignInRequest, open_page: &dyn Fn(&str) -> bool) -> Res
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use mailcraft_net::oauth::{Endpoints, Resource, SignInEnd};
-    use mailcraft_ui_egui::approval::{NEEDS_APPROVAL, NO_BROWSER, SIGN_IN_DECLINED, SIGN_IN_TIMED_OUT};
+    use mailcraft_ui_egui::approval::{
+        GOOGLE_REAUTH_REQUIRED, GOOGLE_SIGN_IN_BLOCKED, GOOGLE_SIGN_IN_DECLINED, GOOGLE_SIGN_IN_TIMED_OUT, NEEDS_APPROVAL, NO_BROWSER,
+        SIGN_IN_DECLINED, SIGN_IN_TIMED_OUT,
+    };
     // No browser could be started: nothing can come back, so the wait is called off at once,
     // and that is what is said.
     let no_browser = AtomicBool::new(false);
@@ -642,6 +697,18 @@ fn sign_in_with(request: SignInRequest, open_page: &dyn Fn(&str) -> bool) -> Res
         let asked = mailcraft_net::oauth::sign_in_for_tasks(&request.oauth, &request.email, &open, &request.cancel);
         return asked.map_err(|refusal| unopened(favorites_refusal(refusal)));
     }
+    // A rule is to go to the server, the sign-in doesn't cover changing the rules (#566), and the
+    // owner said go ahead: the page comes up for that permission alone, by itself.
+    if request.graph && request.rules {
+        let asked = mailcraft_net::oauth::sign_in_for_rules(&request.oauth, &request.email, &open, &request.cancel);
+        return asked.map_err(|refusal| unopened(favorites_refusal(refusal)));
+    }
+    // A change of the automatic replies found the sign-in doesn't cover changing the mailbox's
+    // settings, and the owner said go ahead: the page comes up for that permission alone.
+    if request.graph && request.replies {
+        let asked = mailcraft_net::oauth::sign_in_for_replies(&request.oauth, &request.email, &open, &request.cancel);
+        return asked.map_err(|refusal| unopened(favorites_refusal(refusal)));
+    }
     // Calendars are opened by address for the first time (#70): the page comes up for the same
     // one permission, without what reading shared mailboxes' mail takes, by itself.
     if request.graph && request.shared_calendars {
@@ -655,17 +722,35 @@ fn sign_in_with(request: SignInRequest, open_page: &dyn Fn(&str) -> bool) -> Res
     // A sign-in on the page, at `endpoints`: how it ended, when it brought no tokens. (How, and
     // never in whose words, is what the log is told.)
     let on_the_page = |endpoints: &Endpoints| {
-        let asked = mailcraft_net::oauth::sign_in_explained(endpoints, &request.oauth, &request.email, &open, &request.cancel);
+        let asked = if request.oauth.provider == mailcraft_model::OAuthProvider::Google {
+            mailcraft_net::oauth::sign_in_google_explained_at(
+                endpoints,
+                &request.oauth,
+                &request.google_client_secret,
+                &request.email,
+                &open,
+                &request.cancel,
+            )
+        } else {
+            mailcraft_net::oauth::sign_in_explained(endpoints, &request.oauth, &request.email, &open, &request.cancel)
+        };
         asked.map_err(|end| {
+            let google = request.oauth.provider == mailcraft_model::OAuthProvider::Google;
             let (how, said) = match end {
-                SignInEnd::Approval => ("an administrator has to approve the application first", NEEDS_APPROVAL.to_string()),
                 _ if no_browser.load(Ordering::Relaxed) => ("no browser could be started", NO_BROWSER.to_string()),
+                SignInEnd::Approval if google => ("Google policy prevented authorization", GOOGLE_SIGN_IN_BLOCKED.to_string()),
+                SignInEnd::Approval => ("an administrator has to approve the application first", NEEDS_APPROVAL.to_string()),
+                SignInEnd::Declined if google => ("Google's page came back with a no", GOOGLE_SIGN_IN_DECLINED.to_string()),
                 SignInEnd::Declined => ("the page came back with a no", SIGN_IN_DECLINED.to_string()),
+                SignInEnd::TimedOut if google => ("Google did not complete sign-in", GOOGLE_SIGN_IN_TIMED_OUT.to_string()),
                 SignInEnd::TimedOut => ("nothing came back in time", SIGN_IN_TIMED_OUT.to_string()),
                 SignInEnd::Cancelled => ("it was called off", mailcraft_net::NetError::SignInCancelled.to_string()),
+                // Never hand a potentially sensitive provider response to the window or log.
+                SignInEnd::Other(_) if google => ("it failed", "Google could not complete sign-in. Please retry or use an app password.".into()),
                 SignInEnd::Other(e) => ("it failed", e.to_string()),
             };
-            log::info!("sign-in on Microsoft's page, account {}: {how}", request.account);
+            // The failure category is enough; no account identifier belongs in this log.
+            log::info!("sign-in on the provider's page: {how}");
             said
         })
     };
@@ -677,16 +762,32 @@ fn sign_in_with(request: SignInRequest, open_page: &dyn Fn(&str) -> bool) -> Res
         return on_the_page(&Endpoints::for_resource(&request.oauth, resource));
     }
     if !request.refresh.is_empty() {
-        match mailcraft_net::oauth::refresh(&request.oauth, &request.refresh) {
+        let refreshed = if request.oauth.provider == mailcraft_model::OAuthProvider::Google {
+            mailcraft_net::oauth::refresh_google_at(&Endpoints::of(&request.oauth), &request.oauth, &request.google_client_secret, &request.refresh)
+        } else {
+            mailcraft_net::oauth::refresh(&request.oauth, &request.refresh)
+        };
+        match refreshed {
             Ok(tokens) => return Ok(tokens),
-            // The provider no longer takes what was kept: the owner signs in again (below).
+            // The machine-readable invalid_grant response confirms this Google refresh
+            // credential was revoked. Only a quiet attempt returns the structured signal to
+            // erase this account's old stored grant: interactive attempts proceed to the browser.
+            Err(e) if e.is_revoked_google_refresh() && request.quiet => return Err(GOOGLE_REAUTH_REQUIRED.to_string()),
+            // A refused refresh needs a fresh browser sign-in if the owner asked for it.
             Err(e) if e.is_refused_sign_in() => {}
-            // Trouble reaching the provider: what was kept is still good, so try again later.
+            // A network or server failure must not erase a still-usable refresh token or echo
+            // an untrusted provider error containing secret material.
+            Err(_) if request.oauth.provider == mailcraft_model::OAuthProvider::Google => {
+                return Err("Google sign-in could not reach the authorization server. Retry later.".into());
+            }
             Err(e) => return Err(e.to_string()),
         }
     }
     // Nobody asked for this run: no page is put in front of the owner.
     if request.quiet {
+        if request.oauth.provider == mailcraft_model::OAuthProvider::Google {
+            return Err("Google needs a new sign-in. Use Send/Receive to reconnect.".into());
+        }
         return Err(format!("The sign-in for {} has run out. Use Send/Receive to sign in again.", request.email));
     }
     if request.mail_only {
@@ -1065,9 +1166,13 @@ fn graph_sending_with(mut request: GraphRequest, zone: &str, renew: Renew<'_>, r
                 refused = true;
                 out.held.push(message.id);
             }
-            // Whether it went is not known, or Microsoft said later: not sent a second way now.
+            // Whether it went is not known (then it is held for the owner), or Microsoft said
+            // later (then it goes next run): not sent a second way now.
             Err(e) => {
                 out.held.push(message.id);
+                if graph::send_unsure(&e) {
+                    out.unsure.push(message.id);
+                }
                 out.errors.push(format!("Couldn't send \"{}\" through Microsoft: {e}", message.subject.trim()));
             }
         }
@@ -1336,7 +1441,7 @@ fn tasks_job_with(
         }
     };
     if !job.upload.ops.is_empty() {
-        let uploaded = graph::push_tasks(&access, &job.upload).for_account(&job.account);
+        let uploaded = graph::push_tasks(&access, &job.upload, job.zone).for_account(&job.account);
         out.denied = uploaded.outcomes.iter().any(|o| o.result == TaskResult::Denied);
         let refused = uploaded.token_refused;
         out.uploaded = Some(uploaded);
@@ -1348,12 +1453,152 @@ fn tasks_job_with(
     if out.denied {
         return out;
     }
-    match graph::tasks(&access) {
+    match graph::tasks(&access, job.zone) {
         Ok(download) => out.download = Some(download.for_account(&job.account)),
         // The token covers the permission and Graph still says no: the organisation keeps it.
         Err(NetError::Forbidden(_)) => out.denied = true,
         Err(e) if e.is_refused_sign_in() => out.sign_in_refused = true,
         Err(e) => out.errors.push(format!("Couldn't bring the tasks down: {e}")),
+    }
+    out
+}
+
+/// Keep an account's rules on its server (#566): when something waits to go, a token that may
+/// change the rules (a sign-in that doesn't cover it gets none: the answer says the owner is to
+/// be asked, and nothing is sent), what waits told to the server; then the server's rules read
+/// whole, with the account's ordinary token when nothing went. Nothing of a rule is logged.
+fn rules_job(job: mailcraft_ui_egui::rule_sync::RulesJob) -> mailcraft_ui_egui::rule_sync::RulesResult {
+    rules_job_with(job, &mailcraft_net::oauth::refresh_graph_rules, &mailcraft_net::oauth::refresh_graph_mail)
+}
+
+/// How a rules job gets a token: for changing the rules, or for reading them.
+type RenewGraph<'a> = &'a dyn Fn(&mailcraft_model::OAuth, &str) -> Result<mailcraft_net::oauth::GraphTokens, mailcraft_net::NetError>;
+
+/// [`rules_job`], with how the tokens are had as `write` and `read` (the tests' own, which ask
+/// nobody).
+fn rules_job_with(
+    job: mailcraft_ui_egui::rule_sync::RulesJob,
+    write: RenewGraph<'_>,
+    read: RenewGraph<'_>,
+) -> mailcraft_ui_egui::rule_sync::RulesResult {
+    use mailcraft_model::remote_rules::RuleResult;
+    use mailcraft_net::{NetError, graph};
+    let mut out = mailcraft_ui_egui::rule_sync::RulesResult { account: job.account.id, ..Default::default() };
+    let failed = |out: &mut mailcraft_ui_egui::rule_sync::RulesResult, e: &NetError| {
+        out.sign_in_refused = e.is_refused_sign_in();
+        if !out.sign_in_refused {
+            out.errors.push(format!("Couldn't sign in to Microsoft for the rules: {e}"));
+        }
+    };
+    let mut refresh = job.refresh.clone();
+    let mut access = String::new();
+    if !job.upload.ops.is_empty() {
+        match write(&job.oauth, &refresh) {
+            Ok(got) => {
+                access = got.tokens.access.clone();
+                if !got.tokens.refresh.is_empty() {
+                    refresh = got.tokens.refresh.clone();
+                }
+                out.tokens = Some(got.tokens);
+            }
+            // Nothing is sent: the owner is asked. The server's rules are still read.
+            Err(e) if e.is_consent_needed() => out.consent_needed = true,
+            Err(e) => {
+                failed(&mut out, &e);
+                return out;
+            }
+        }
+    }
+    if !access.is_empty() {
+        let uploaded = graph::push_rules(&access, &job.upload).for_account(&job.account);
+        out.denied = uploaded.outcomes.iter().any(|o| o.result == RuleResult::Denied);
+        let refused = uploaded.token_refused;
+        out.uploaded = Some(uploaded);
+        if refused {
+            out.sign_in_refused = true;
+            return out;
+        }
+    }
+    if access.is_empty() {
+        match read(&job.oauth, &refresh) {
+            Ok(got) => {
+                access = got.tokens.access.clone();
+                out.tokens = Some(got.tokens);
+            }
+            Err(e) if e.is_consent_needed() => {
+                // (The account's mail isn't covered either: its own run says so.)
+                out.unreadable = true;
+                return out;
+            }
+            Err(e) => {
+                failed(&mut out, &e);
+                return out;
+            }
+        }
+    }
+    match graph::rules(&access, &job.folders) {
+        Ok(download) => out.download = Some(download.for_account(&job.account)),
+        // The sign-in doesn't cover reading the mailbox's settings.
+        Err(NetError::Forbidden(_)) => out.unreadable = true,
+        Err(e) if e.is_refused_sign_in() => out.sign_in_refused = true,
+        Err(e) => out.errors.push(format!("Couldn't read the rules on the server: {e}")),
+    }
+    out
+}
+
+/// File › Info › Automatic Replies: a read takes the calendar's tokens, which read the
+/// mailbox's settings (no more token requests than any Graph job makes); a change takes a token
+/// for changing them, which a sign-in doesn't carry until the owner allowed it by itself (then
+/// the answer says he is to be asked, and nothing is sent). The setting is read back after a
+/// change. Nothing of a reply is logged.
+fn auto_replies_job(job: mailcraft_ui_egui::auto_replies::AutoRepliesJob) -> mailcraft_ui_egui::auto_replies::AutoRepliesResult {
+    use mailcraft_net::{NetError, graph, oauth};
+    let mut out = mailcraft_ui_egui::auto_replies::AutoRepliesResult { account: job.account.id, ..Default::default() };
+    let renewed = match &job.change {
+        Some(_) => oauth::refresh_graph_replies(&job.oauth, &job.refresh, tasks_mail(&job.account)).map(|got| (got.tokens, true)),
+        None => oauth::refresh_graph(&job.oauth, &job.refresh).map(|got| (got.tokens, !got.extras_missing)),
+    };
+    let access = match renewed {
+        Ok((tokens, covered)) => {
+            let access = tokens.access.clone();
+            out.tokens = Some(tokens);
+            if !covered {
+                // The sign-in doesn't read the mailbox's settings: the owner is to sign in again.
+                out.consent_needed = true;
+                return out;
+            }
+            access
+        }
+        Err(e) if e.is_consent_needed() && job.change.is_some() => {
+            out.write_consent_needed = true;
+            return out;
+        }
+        Err(e) => {
+            out.consent_needed = e.is_consent_needed();
+            out.sign_in_refused = !out.consent_needed && e.is_refused_sign_in();
+            if !out.consent_needed && !out.sign_in_refused {
+                out.error = format!("Couldn't sign in to Microsoft for the automatic replies: {e}");
+            }
+            return out;
+        }
+    };
+    if let Some(change) = &job.change {
+        match graph::set_automatic_replies(&access, change) {
+            Ok(()) => out.changed = true,
+            // The token covers the permission and Graph still says no: the organisation keeps them.
+            Err(NetError::Forbidden(_)) => out.write_denied = true,
+            Err(e) if e.is_refused_sign_in() => {
+                out.sign_in_refused = true;
+                return out;
+            }
+            Err(e) => out.error = format!("Couldn't change the automatic replies: {e}"),
+        }
+    }
+    match graph::automatic_replies(&access) {
+        Ok(setting) => out.setting = Some(setting),
+        Err(e) if e.is_refused_sign_in() => out.sign_in_refused = true,
+        Err(e) if out.error.is_empty() => out.error = format!("Couldn't read the automatic replies: {e}"),
+        Err(_) => {}
     }
     out
 }
@@ -1495,13 +1740,17 @@ fn services(
     let approval_ctx = ctx.clone();
     let fetch_ctx = ctx.clone();
     let dav_ctx = ctx.clone();
+    let (ews_ctx, ews_fetch_ctx, ews_setup_ctx) = (ctx.clone(), ctx.clone(), ctx.clone());
     let search_ctx = ctx.clone();
     let tasks_ctx = ctx.clone();
+    let rules_ctx = ctx.clone();
+    let replies_ctx = ctx.clone();
     let ahead_ctx = ctx.clone();
     let update_ctx = ctx.clone();
     let download_ctx = ctx.clone();
     let copy_ctx = ctx.clone();
     let tree_ctx = ctx.clone();
+    let pst_ctx = ctx.clone();
     let alert_ctx = ctx.clone();
     let (sync_ctx, sign_in_ctx, graph_ctx, mx_ctx, test_ctx) = (ctx.clone(), ctx.clone(), ctx.clone(), ctx.clone(), ctx);
     let sync_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1542,6 +1791,10 @@ fn services(
         graph_fetch: Some(Box::new(move |job: mailcraft_ui_egui::graph_fetch::GraphFetchJob| {
             background(&fetch_ctx, "message download", move || mailcraft_net::graph::fetch_messages(&job.access, &job.request, &job.cancel))
         })),
+        // An Exchange server account (#252): read through Exchange Web Services, and its messages fetched whole.
+        ews: Some(Box::new(move |job| ews_runner::run_mail(job, &ews_ctx))),
+        ews_fetch: Some(Box::new(move |job| ews_runner::run_fetch(job, &ews_fetch_ctx))),
+        ews_setup: Some(Box::new(move |job| ews_setup::run_setup(job, &ews_setup_ctx))),
         // A Microsoft mailbox searched on its server, a page at a time, on the owner's click (R6.2).
         graph_search: Some(Box::new(move |job: mailcraft_ui_egui::server_search::GraphSearchJob| {
             background(&search_ctx, "server search", move || mailcraft_net::graph::search_messages(&job.access, &job.request))
@@ -1549,6 +1802,14 @@ fn services(
         // The tasks of a Microsoft account, kept in step with Microsoft To Do (#248).
         graph_tasks: Some(Box::new(move |job: mailcraft_ui_egui::task_sync::TasksJob| {
             background(&tasks_ctx, "microsoft to do", move || tasks_job(job))
+        })),
+        // The rules a Microsoft account's server keeps (#566).
+        graph_rules: Some(Box::new(move |job: mailcraft_ui_egui::rule_sync::RulesJob| {
+            background(&rules_ctx, "server rules", move || rules_job(job))
+        })),
+        // File › Info › Automatic Replies of a Microsoft account, read and changed on its server.
+        graph_auto_replies: Some(Box::new(move |job: mailcraft_ui_egui::auto_replies::AutoRepliesJob| {
+            background(&replies_ctx, "automatic replies", move || auto_replies_job(job))
         })),
         lookup_mx: Some(Box::new(move |domain| {
             background(&mx_ctx, "mail exchangers", move || mailcraft_net::lookup_mx(&domain).map_err(|e| e.to_string()))
@@ -1567,6 +1828,23 @@ fn services(
             background(&tree_ctx, "folder import", move || {
                 mailcraft_engine::import_tree::load_path(&job.path, None, job.count_only, &job.progress).map_err(|e| e.to_string())
             })
+        })),
+        // A .pst file's mail, read off the window's thread a batch at a time (#815): a small
+        // channel, so that the reader waits for the window rather than holding the whole file.
+        import_pst: Some(Box::new(move |job: mailcraft_ui_egui::import_pst::PstJob| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(2);
+            let wake = pst_ctx.clone();
+            let spawned = std::thread::Builder::new().name("pst import".into()).spawn(move || {
+                mailcraft_engine::import_pst::read_path(&job.path, &job.job, &job.progress, &mut |event| {
+                    let sent = tx.send(event).is_ok();
+                    wake.request_repaint();
+                    sent
+                });
+            });
+            if let Err(e) = spawned {
+                log::error!("couldn't start the .pst import: {e}");
+            }
+            rx
         })),
         // Another mailbox file, read off the window's thread before it takes the place of the one
         // open (File › Open, #519): the window shows how far it has got and can call it off. A
@@ -1626,6 +1904,10 @@ fn services(
         // Help › Copy Diagnostics: the version, the platform and the redacted end of the logs.
         diagnostics: Some(Box::new(|| diagnostics::report(env!("CARGO_PKG_VERSION"), build_sha(), log_dir().filter(|_| prefs_enabled()).as_deref()))),
         microsoft_client_id: microsoft_client_id(),
+        google_client_id: google_client_id(),
+        google_client_secret: google_client_secret(),
+        // ponytail: false once Google has verified the app (#232).
+        google_testers_only: true,
         // Whether a new version is out: GitHub is asked about this build's repository and told
         // nothing else, once a day when the owner wants that, or when they press Check for Updates.
         update_check: Some(Box::new(move |pre_releases| {
@@ -1638,7 +1920,6 @@ fn services(
         updates_turned_off_by_organisation: updater::turned_off_by_organisation(),
         // The system's language, for an interface language left on Automatic.
         system_locale: system_locale::system_locale(),
-        google_client_id: google_client_id(),
         ..Default::default()
     }
 }
@@ -1832,6 +2113,12 @@ fn main() -> eframe::Result {
             self_update::clear_mac_data(&folders);
         }
     }
+    // The icons of MailCraft in the owner's own data folder, brought up to this version's: an
+    // update replaces the program, not the icons a copy put in place by hand came with (#732).
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    if build_sha() != "dev" && prefs_enabled() {
+        desktop_icons::refresh();
+    }
     // The settings folder holds the mailbox, the control key and the logs: for the owner alone.
     // One an earlier version left open to others is closed; best effort, never a reason not to
     // start (a folder of somebody else's, named by `--mailbox`, is not touched).
@@ -1841,7 +2128,8 @@ fn main() -> eframe::Result {
         log::debug!("the settings folder was not made private: {e}");
     }
     // One window per mailbox file: started again, MailCraft hands what it was started with to
-    // the window that has the mailbox and exits. The sample keeps no file, so it isn't guarded.
+    // the window that has the mailbox and exits. The sample keeps no file, so nothing is locked at the
+    // start; a mailbox file it opens later is (#517).
     let kept = if sample { None } else { mailbox_path.clone().or_else(|| default_mailbox_path().filter(|_| prefs_enabled())) };
     let guard = match kept {
         Some(path) => match single_instance::start(&path, &files) {
@@ -1853,7 +2141,8 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
         },
-        None => None,
+        // Nothing held yet: a mailbox file opened later in the window is locked all the same.
+        None => Some(single_instance::none()),
     };
     // The log file lives in the settings directory, next to the preferences; opened after the
     // arguments, so `--version` leaves no file behind. Runs without preferences (agents' test
@@ -1897,6 +2186,8 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
+    // For the window, to take the lock of another mailbox file before it opens it (#517).
+    let claimer = guard.as_ref().map(single_instance::Guard::claimer);
     run_window(
         options,
         Box::new(move |cc| {
@@ -1921,7 +2212,6 @@ fn main() -> eframe::Result {
                 let (mailbox, path, unavailable, unchecked, damaged) =
                     (arrival.mailbox, arrival.path, arrival.unavailable, arrival.unchecked, arrival.damaged);
                 let mut session = Session::new(mailbox);
-                session.ews = ews_switch();
                 let kept = path.is_some();
                 session.path = path;
                 // Search answers from a word index kept beside the mailbox file, built in the
@@ -1933,6 +2223,8 @@ fn main() -> eframe::Result {
                 services.window_identity =
                     Some(mailcraft_ui_egui::windows::WindowIdentity { icon: app_icon().map(std::sync::Arc::new), app_id: Some(APP_ID.into()) });
                 services.update_start = update_start;
+                services.claim_mailbox =
+                    claimer.map(|c| Box::new(move |path: &std::path::Path| c.claim(path)) as Box<dyn Fn(&std::path::Path) -> bool>);
                 let mut app = MailApp::new(session, services);
                 // Nowhere to keep the mailbox (the sample, a run without preferences): don't try.
                 app.autosave = kept;
@@ -1960,25 +2252,27 @@ fn main() -> eframe::Result {
                     app.status(format!("{unavailable} bodies or attachments are missing from the mailbox's content folder, or damaged."));
                 }
                 // A mailbox whose Outlook Favorites were read another way than Microsoft Graph,
-                // which is no more: said once, and the file is saved without it.
-                if app.session.mailbox.take_retired_favorites_choices() > 0 {
-                    app.session.mailbox_changed();
+                // which is no more: said once, and the file is saved without it. Mail of
+                // Microsoft accounts kept with characters that couldn't be read (fetched before
+                // their character sets were) is fetched again, once (#185); IMAP accounts' mail
+                // the same way, by UID, at the next Send/Receive (#650); and mail an earlier
+                // version put back empty after a refused delete for good, before anything can
+                // move it (#793). The same steps as `file.open`'s.
+                let after = mailcraft_engine::cmd::file::after_opening(&mut app.session);
+                if after.favorites_now_graph > 0 {
                     app.status(mailcraft_ui_egui::favorites_sync::FAVORITES_NOW_GRAPH);
                 }
-                // Mail of Microsoft accounts kept with characters that couldn't be read (fetched
-                // before their character sets were) is fetched again, once (#185).
-                let again = mailcraft_engine::cmd::graph_down::refetch_unreadable(&mut app.session.mailbox);
-                if again > 0 {
-                    app.session.mailbox_changed();
-                    app.status(format!("{again} messages with characters that couldn't be read are being downloaded again."));
+                for notice in mailcraft_ui_egui::fetched_again_notices(after.unreadable, after.hollow) {
+                    app.status(notice);
                 }
                 // An ordinary start on a mailbox nobody has set up yet begins with adding an account.
                 app.offer_setup = kept && !sample;
                 // A Microsoft account still on IMAP is offered the switch to Graph (R3.7): only
                 // for a mailbox kept in a file, which is where the copy from before the switch goes.
                 app.offer_graph_switch = kept && !sample;
-                if let Some(ui) = prefs {
-                    app.apply_prefs(ui);
+                match prefs {
+                    Some(ui) => app.apply_prefs(ui),
+                    None => app.fresh_prefs(),
                 }
                 app.settings_unread = settings_unread;
                 app.ui.window = restored;

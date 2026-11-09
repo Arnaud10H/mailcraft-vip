@@ -27,9 +27,9 @@ use std::sync::{Arc, Mutex};
 use egui::epaint::text::CharIndex;
 use egui::text::{CCursor, LayoutJob, TextFormat};
 use egui::{Align2, Event, FontFamily, Galley, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2, pos2, vec2};
+use mailcraft_model::RichBody;
 use mailcraft_model::rich::{ListKind, OBJECT, Paragraph, Selection, Style, numbers};
 use mailcraft_model::signature::Picture;
-use mailcraft_model::{RichBody, RichText};
 use serde_json::{Value, json};
 
 use crate::MailApp;
@@ -50,6 +50,14 @@ fn indent_of(p: &Paragraph) -> f32 {
 /// Longest text an input method is shown composing.
 const MAX_PREEDIT: usize = 256;
 
+/// What a picture is laid out as when egui must be able to break the line before it: a kana
+/// letter, never shown (a picture is laid out as [`OBJECT`] otherwise).
+const BREAKS_BEFORE: char = '\u{30A2}';
+
+/// The most times a paragraph's text is laid out to find the pictures that start a row
+/// ([`Layout::lay`]), with one more after that.
+const MOST_LAYOUTS: usize = 32;
+
 /// Which text the editor shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Which {
@@ -60,22 +68,36 @@ pub enum Which {
 }
 
 impl Which {
-    fn id(self) -> egui::Id {
+    fn id(self, app: &MailApp) -> egui::Id {
         match self {
-            Which::Message => id(),
+            Which::Message => id(app),
             Which::Signature => egui::Id::unique("mailcraft-signature-body"),
         }
     }
 }
 
-/// The body's id: what has the keyboard when it does.
-pub fn id() -> egui::Id {
-    egui::Id::unique("mailcraft-compose-body")
+/// The id of the body of the message being written `compose`: what has the keyboard when it
+/// does. Each message has its own (#286), so that two never share a caret, a layout or the keyboard.
+pub fn id_of(compose: u64) -> egui::Id {
+    egui::Id::unique("mailcraft-compose-body").with(compose)
 }
 
-/// Whether the body (or a signature being edited) has the keyboard.
+/// The body's id of the current message being written.
+pub fn id(app: &MailApp) -> egui::Id {
+    id_of(app.session.compose_id().unwrap_or_default())
+}
+
+/// What marks the id of a body drawn (of any message being written, or of a signature).
+const BODY: &str = "mailcraft-body";
+
+/// Whether `id` is the body of a message being written, or of a signature being edited.
+pub fn is_body(ctx: &egui::Context, id: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(id.with(BODY))).unwrap_or(false)
+}
+
+/// Whether a body (of a message being written, or of a signature being edited) has the keyboard.
 pub fn has_focus(ctx: &egui::Context) -> bool {
-    ctx.memory(|m| m.has_focus(id()) || m.has_focus(Which::Signature.id()))
+    ctx.memory(|m| m.focused()).is_some_and(|id| is_body(ctx, id))
 }
 
 /// The key a command has in the body (shown in tooltips and menus). They are not the registry's
@@ -113,8 +135,11 @@ pub(super) fn text_format(style: &Style, plain: bool, t: &Tokens, has: &dyn Fn(&
         crate::theme::document_font(style.font, style.bold, size, has).unwrap_or_else(|| if style.bold { semibold(size) } else { regular(size) });
     let own = style.color.as_deref().and_then(|c| egui::Color32::from_hex(c).ok()).map(|c| crate::reading::colors::readable(c, t.surface));
     let color = if style.link.is_some() { t.accent_text } else { own.unwrap_or(t.text) };
+    // A highlight is drawn as it is chosen, and the text over it kept readable on it.
+    let background = style.highlight.as_deref().and_then(|c| egui::Color32::from_hex(c).ok());
+    let color = background.map_or(color, |paper| crate::reading::colors::readable(color, paper));
     let underline = if style.underline || style.link.is_some() { Stroke::new(1.0, color) } else { Stroke::NONE };
-    TextFormat { font_id: font, color, italics: style.italic, underline, ..Default::default() }
+    TextFormat { font_id: font, color, italics: style.italic, underline, background: background.unwrap_or_default(), ..Default::default() }
 }
 
 /// What a layout was made for: when any of it changes, every paragraph is laid out again.
@@ -197,19 +222,20 @@ pub(crate) struct Layout {
     atlas: f32,
     /// How many paragraphs were laid out so far, for tests.
     laid: usize,
+    /// How many times egui laid out a paragraph's text so far, for tests.
+    layouts: usize,
 }
 
 impl Layout {
     /// Bring the layout up to `doc`: the paragraphs that changed (and only those) are laid out
     /// again. Whether anything did.
-    fn sync(&mut self, ctx: &egui::Context, doc: &RichText, pictures: &[Picture], key: LayoutKey, t: &Tokens, width: f32) -> bool {
+    fn sync(&mut self, ctx: &egui::Context, paragraphs: &[Paragraph], pictures: &[Picture], key: LayoutKey, t: &Tokens, width: f32) -> bool {
         let atlas = ctx.fonts(|f| f.font_atlas_fill_ratio());
         if self.key != Some(key) || atlas < self.atlas {
             self.paras.clear();
             self.key = Some(key);
         }
         self.atlas = atlas;
-        let paragraphs = doc.paragraphs();
         let numbers = numbers(paragraphs);
         let same = |new: usize, old: usize| matches!((paragraphs.get(new), numbers.get(new), self.paras.get(old)), (Some(p), Some(n), Some(o)) if o.number == *n && o.source == *p);
         let (n_new, n_old) = (paragraphs.len(), self.paras.len());
@@ -237,36 +263,96 @@ impl Layout {
     fn lay(&mut self, ctx: &egui::Context, p: &Paragraph, number: u32, plain: bool, pictures: &[Picture], t: &Tokens, width: f32) -> Para {
         let indent = indent_of(p);
         let room = (width - indent).max(24.0);
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = room;
         // A picture is a gap in the line as wide as the picture before an unseen character, in a
         // line as tall as the picture; it is painted into the gap.
-        let mut sized = Vec::new();
-        let mut local = 0;
+        let object = TextFormat { font_id: regular(1.0), color: egui::Color32::TRANSPARENT, ..Default::default() };
         let known = ctx.fonts(|f| f.families());
         let has = |family: &FontFamily| known.contains(family);
-        for run in &p.runs {
-            match run.picture.and_then(|id| Some((id, size_of(ctx, pictures.iter().find(|x| x.id == id)?, room)))) {
-                Some((id, size)) if !plain => {
-                    let format =
-                        TextFormat { font_id: regular(1.0), color: egui::Color32::TRANSPARENT, line_height: Some(size.y), ..Default::default() };
-                    job.append(&OBJECT.to_string(), size.x, format);
-                    sized.push((local, id, size));
-                }
-                _ => job.append(&run.text, 0.0, text_format(&run.style, plain, t, &has)),
+        // Each picture shown: its run, its place in the paragraph, its id, its size and whether it
+        // comes right after a character egui does not break a line after (a word, or another
+        // picture).
+        let mut sized = Vec::new();
+        let (mut local, mut last) = (0, None::<char>);
+        for (r, run) in p.runs.iter().enumerate() {
+            if let Some((id, size)) =
+                run.picture.filter(|_| !plain).and_then(|id| Some((id, size_of(ctx, pictures.iter().find(|x| x.id == id)?, room))))
+            {
+                let glued = last.is_some_and(|c| !c.is_whitespace() || c == '\u{A0}');
+                sized.push((r, local, id, size, glued));
             }
             local += run.text.chars().count();
+            last = run.text.chars().last().or(last);
         }
-        if job.sections.is_empty() {
-            job.append("", 0.0, text_format(&Style::default(), plain, t, &has));
+        // But egui drops a gap that starts a wrapped row, and a gap at the start of a paragraph
+        // makes it put an empty row first when the line is too narrow: the picture was then drawn
+        // left of the body (#792). A picture that starts a row stands right of its character
+        // instead, and its gap goes before what follows it. That is every picture at the start of
+        // its paragraph, and those found to wrap once laid out. egui breaks a line only after a
+        // space (or by a CJK letter), so a picture right after a word or another picture would go
+        // along with it and stand past the right edge: such a picture is laid out as a kana letter
+        // instead, which egui may break before. That is settled before the first layout, so only
+        // the gaps change from one layout to the next: and only the first picture found to start
+        // a row is marked each time, as the gap it moves shifts everything after it but nothing
+        // before it. That is one layout more for each picture that starts a row, and a draft can
+        // repeat a picture any number of times in a paragraph: after [`MOST_LAYOUTS`], every
+        // picture not marked yet is marked, and laid out once more. A marked picture keeps both
+        // gaps, the one before its character (which egui drops at the start of a row) and the
+        // one after it, and is drawn in whichever its row has: one marked that needn't be only
+        // leaves a blank as wide as itself, and nothing is ever drawn over it.
+        let mut wrapped: Vec<bool> = sized.iter().map(|(_, local, ..)| *local == 0).collect();
+        let starts_row = |glyph: Rect, size: Vec2| glyph.min.x < size.x - 0.5;
+        let mut galley;
+        let mut passes = 0;
+        loop {
+            let mut job = LayoutJob::default();
+            job.wrap.max_width = room;
+            let (mut k, mut carry) = (0, 0.0);
+            for (r, run) in p.runs.iter().enumerate() {
+                match sized.get(k).filter(|(at, ..)| *at == r) {
+                    Some((_, local, _, size, glued)) => {
+                        let before = if *local == 0 { 0.0 } else { size.x };
+                        let mark = if *glued { BREAKS_BEFORE } else { OBJECT };
+                        job.append(&mark.to_string(), carry + before, TextFormat { line_height: Some(size.y), ..object.clone() });
+                        carry = if wrapped.get(k).copied().unwrap_or(false) { size.x } else { 0.0 };
+                        k += 1;
+                    }
+                    None => {
+                        job.append(&run.text, carry, text_format(&run.style, plain, t, &has));
+                        carry = 0.0;
+                    }
+                }
+            }
+            if job.sections.is_empty() {
+                job.append("", 0.0, text_format(&Style::default(), plain, t, &has));
+            }
+            galley = ctx.fonts_mut(|f| f.layout_job(job));
+            passes += 1;
+            self.layouts += 1;
+            if wrapped.iter().all(|w| *w) {
+                break;
+            }
+            if passes >= MOST_LAYOUTS {
+                wrapped.iter_mut().for_each(|w| *w = true);
+                continue;
+            }
+            let found = sized.iter().zip(&wrapped).position(|((_, local, _, size, _), w)| {
+                !*w && starts_row(galley.pos_from_cursor(CCursor { index: (*local).into(), prefer_next_row: true }), *size)
+            });
+            match found.and_then(|i| wrapped.get_mut(i)) {
+                Some(w) => *w = true,
+                None => break,
+            }
         }
         self.laid += 1;
-        let galley = ctx.fonts_mut(|f| f.layout_job(job));
+        // Each picture is drawn where its gap is: in the gap before its character, or right of
+        // its character when it starts its row (whether or not it was marked, so a picture is
+        // never drawn away from its gap).
         let pictures = sized
             .into_iter()
-            .filter_map(|(local, id, size)| {
-                let glyph = galley.pos_from_cursor(CCursor::new(local));
-                let rect = Rect::from_min_max(pos2(glyph.min.x - size.x, glyph.max.y - size.y), pos2(glyph.min.x, glyph.max.y));
+            .filter_map(|(_, local, id, size, _)| {
+                let glyph = galley.pos_from_cursor(CCursor { index: local.into(), prefer_next_row: true });
+                let left = if local == 0 || starts_row(glyph, size) { glyph.min.x } else { glyph.min.x - size.x };
+                let rect = Rect::from_min_size(pos2(left, glyph.max.y - size.y), size);
                 rect.is_finite().then_some(PictureBox { local, id, rect })
             })
             .collect();
@@ -354,6 +440,10 @@ impl Layout {
         if let Some(b) = p.picture_at(local) {
             // Before a picture is at its left, not after its gap.
             return Rect::from_min_max(pos2(b.rect.min.x, b.rect.min.y), pos2(b.rect.min.x, b.rect.max.y)).translate(vec2(p.indent(), p.top));
+        }
+        if let Some(b) = local.checked_sub(1).and_then(|l| p.picture_at(l)) {
+            // After a picture is at its right, wherever its character stands.
+            return Rect::from_min_max(pos2(b.rect.max.x, b.rect.min.y), pos2(b.rect.max.x, b.rect.max.y)).translate(vec2(p.indent(), p.top));
         }
         let r = p.galley.pos_from_cursor(CCursor::new(local)).translate(vec2(p.indent(), p.top));
         if r.height() < 1.0 { Rect::from_min_size(pos2(p.indent(), p.top), vec2(0.0, p.height())) } else { r }
@@ -459,14 +549,14 @@ fn pictures_key(pictures: &[Picture]) -> u64 {
 }
 
 /// The layout of the body, kept from frame to frame.
-fn store(ctx: &egui::Context, which: Which) -> Arc<Mutex<Layout>> {
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<Arc<Mutex<Layout>>>(which.id().with("layout")).clone())
+fn store(ctx: &egui::Context, id: egui::Id) -> Arc<Mutex<Layout>> {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Arc<Mutex<Layout>>>(id.with("layout")).clone())
 }
 
-/// How many paragraphs of the body were laid out since the window opened, for tests.
+/// How many paragraphs of the current message's body were laid out since the window opened, for tests.
 #[cfg(test)]
-pub(crate) fn laid(ctx: &egui::Context) -> usize {
-    store(ctx, Which::Message).lock().map_or(0, |l| l.laid)
+pub(crate) fn laid(ctx: &egui::Context, app: &MailApp) -> usize {
+    store(ctx, id(app)).lock().map_or(0, |l| l.laid)
 }
 
 /// What the body remembers between frames besides its layout.
@@ -523,6 +613,23 @@ fn pictures(app: &MailApp, which: Which) -> Vec<Picture> {
     }
 }
 
+/// The signature's own HTML while the message shows it as it goes out, under the text in place of
+/// its simpler copy ([`crate::compose`] draws it): an unedited HTML signature, unless the owner
+/// chose to edit it as text (`compose.signatureAsText`).
+pub(crate) fn html_signature(app: &MailApp) -> Option<&str> {
+    app.session.compose.as_ref()?.signature_html_shown()
+}
+
+/// The signature's own HTML while it is still unedited: an HTML signature that ends an HTML
+/// message with text before it, shown as it goes out or as its simpler copy.
+pub(crate) fn unedited_html_signature(app: &MailApp) -> Option<&str> {
+    let c = app.session.compose.as_ref()?;
+    let html = c.signature.as_ref()?.html.as_deref()?;
+    let paragraphs = c.body.text().paragraphs();
+    let ends = paragraphs.first().is_some_and(|p| !p.signature) && paragraphs.last().is_some_and(|p| p.signature);
+    (c.format == mailcraft_engine::BodyFormat::Html && ends && c.signature_unedited()).then_some(html)
+}
+
 /// The selection, the caret and whether the text is plain.
 fn now(app: &MailApp, which: Which) -> Option<(Selection, bool)> {
     body(app, which).map(|(b, plain)| (b.selection(), plain))
@@ -539,7 +646,8 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui, min_height: f32, take_focus: 
 pub(crate) fn show_doc(app: &mut MailApp, ui: &mut Ui, which: Which, min_height: f32, take_focus: bool) {
     let ctx = ui.ctx().clone();
     let t = Tokens::get(&ctx);
-    let id = which.id();
+    let id = which.id(app);
+    ctx.data_mut(|d| d.insert_temp(id.with(BODY), true));
     let width = ui.available_width().max(40.0);
     let Some((_, plain)) = now(app, which) else { return };
     let editable = which == Which::Signature || app.session.signature_edit.is_none();
@@ -552,11 +660,15 @@ pub(crate) fn show_doc(app: &mut MailApp, ui: &mut Ui, which: Which, min_height:
         pictures: pictures_key(&shown),
         families: ctx.fonts(|f| f.families().len()),
     };
-    let store = store(&ctx, which);
+    let store = store(&ctx, id);
     let mut layout = store.lock().unwrap_or_else(|e| e.into_inner());
     let resync = |layout: &mut Layout, app: &MailApp| {
         if let Some((b, _)) = body(app, which) {
-            layout.sync(&ctx, b.text(), &shown, key, &t, width);
+            let all = b.text().paragraphs();
+            // An HTML signature drawn as it goes out is not in the text laid out here.
+            let html = which == Which::Message && html_signature(app).is_some();
+            let end = if html { all.iter().position(|p| p.signature).unwrap_or(all.len()) } else { all.len() };
+            layout.sync(&ctx, all.get(..end).unwrap_or(all), &shown, key, &t, width);
         }
     };
     resync(&mut layout, app);
@@ -570,7 +682,7 @@ pub(crate) fn show_doc(app: &mut MailApp, ui: &mut Ui, which: Which, min_height:
     // Changed since the last frame, by a command from elsewhere (an agent's or a script's
     // `compose.select`, the ribbon's): not selected by the owner here.
     own(app, which, &mut st, None);
-    if editable && (take_focus || (which == Which::Message && std::mem::take(&mut app.body_focus_wanted))) {
+    if editable && (take_focus || (which == Which::Message && app.take_body_focus())) {
         resp.request_focus();
     }
     let mut reveal = false;
@@ -637,6 +749,11 @@ pub(crate) fn show_doc(app: &mut MailApp, ui: &mut Ui, which: Which, min_height:
             let _ = app.execute(command, params);
             st.column = None;
             own(app, which, &mut st, Some(command));
+        }
+        // Format Painter: the look it copied goes on what the pointer has just selected.
+        if (resp.drag_stopped() || resp.clicked()) && body(app, which).is_some_and(|(b, _)| b.painter().is_some() && !b.selection().is_empty()) {
+            let _ = app.run("edit.formatPainter", json!({"apply": true}));
+            own(app, which, &mut st, Some("edit.formatPainter"));
         }
     }
     // A middle click on X11 and Wayland pastes the primary selection where the pointer is, as
@@ -1056,6 +1173,8 @@ fn key_press(layout: &Layout, st: &mut State, sel: Selection, plain: bool, key: 
         Key::Enter if !m.command && !m.alt => ask("compose.type", json!({"text": "\n"})),
         Key::Backspace if sel.is_empty() && word && head > 0 => ask("compose.delete", json!({"from": layout.word_left(head), "to": head})),
         Key::Backspace => ask("compose.delete", json!({})),
+        // (At the end, nothing: not the paragraph break before a signature that isn't shown.)
+        Key::Delete if sel.is_empty() && head >= len => None,
         Key::Delete if sel.is_empty() && word && head < len => ask("compose.delete", json!({"from": head, "to": layout.word_right(head)})),
         Key::Delete => ask("compose.delete", json!({"forward": true})),
         // In a list, Tab at an item's start (or over a selection) takes it a level deeper and
@@ -1102,3 +1221,6 @@ fn nothing_written(app: &MailApp) -> bool {
         before.trim().is_empty()
     })
 }
+#[cfg(test)]
+#[path = "wide_picture_tests.rs"]
+mod wide_picture_tests;

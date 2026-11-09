@@ -65,12 +65,11 @@ fn debug_output_shows_no_address_name_or_fingerprint() {
 }
 
 #[test]
-fn an_exchange_account_has_a_server_server_ids_and_sends_mail_but_only_behind_the_switch() {
+fn an_exchange_account_has_a_server_server_ids_and_sends_mail() {
     use crate::AccountKind::{self, *};
     assert_eq!([Local, Imap, Microsoft, Jmap, Exchange, Unknown].map(AccountKind::has_server), [false, true, true, true, true, false]);
     assert_eq!([Local, Imap, Microsoft, Jmap, Exchange, Unknown].map(AccountKind::sends_mail), [false, true, true, false, true, false]);
     assert_eq!([Local, Imap, Microsoft, Jmap, Exchange, Unknown].map(AccountKind::server_ids), [false, false, true, true, true, false]);
-    assert_eq!([Local, Imap, Microsoft, Jmap, Exchange, Unknown].map(AccountKind::needs_switch), [false, false, false, false, true, false]);
 }
 
 #[test]
@@ -99,4 +98,25 @@ fn an_exchange_account_keeps_its_setting_and_a_damaged_one_costs_only_itself() {
         assert_eq!(read.kind, AccountKind::Exchange, "{odd}");
         assert!(read.ews.as_ref().is_none_or(|server| server.problem().is_some()), "{odd}: {:?}", read.ews);
     }
+}
+
+#[test]
+fn an_address_on_a_microsoft_host_is_refused_and_a_lookalike_is_not() {
+    for url in [
+        "https://outlook.office365.com/EWS/Exchange.asmx",
+        "https://outlook.office.com/EWS/Exchange.asmx",
+        "https://OUTLOOK.OFFICE365.COM/EWS/Exchange.asmx",
+        "https://outlook.office365.com./EWS/Exchange.asmx",
+        "https://x.outlook.com:444/EWS/Exchange.asmx",
+        "https://tenant.mail.onmicrosoft.com/EWS/Exchange.asmx",
+    ] {
+        assert!(EwsServer::check_url(url).is_err(), "{url}");
+        assert!(EwsServer { url: url.into(), ..Default::default() }.problem().is_some(), "{url}");
+    }
+    for url in
+        ["https://outlook.abc.com/EWS/Exchange.asmx", "https://evil-office365.com/EWS/Exchange.asmx", "https://mail.example.org/EWS/Exchange.asmx"]
+    {
+        assert!(EwsServer::check_url(url).is_ok(), "{url}");
+    }
+    assert!(is_microsoft_domain("hotmail.co.uk") && is_microsoft_domain("live.com.au") && !is_microsoft_domain("live.bbc.com"));
 }

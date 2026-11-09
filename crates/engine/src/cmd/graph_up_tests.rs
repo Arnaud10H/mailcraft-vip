@@ -132,7 +132,7 @@ fn a_move_out_of_the_account_waits_for_the_whole_message_and_the_save() {
     s.mailbox.message_mut(m).unwrap().unfetched = true;
     s.run("mail.move", &json!({"ids": [m], "folder": kept})).unwrap();
     let moved = s.mailbox.message(m).unwrap();
-    assert_eq!(moved.moving_out, Some(MovingOut { account, id: "M-1".into(), folder: "F-in".into(), left: false }));
+    assert_eq!(moved.moving_out, Some(MovingOut { account, id: "M-1".into(), folder: "F-in".into(), left: false, listing: false }));
     assert!(moved.server.is_none() && moved.folder == kept);
     // Fetched first of all, whatever its size.
     assert_eq!(super::super::graph_down::fetch_queue(&s.mailbox, account, 5, s.now()), ["M-1"]);
@@ -414,7 +414,7 @@ fn a_refused_delete_for_good_is_put_back_at_once_with_all_that_was_fetched() {
     s.run("mail.deletePermanently", &json!({"ids": [m]})).unwrap();
     assert!(s.mailbox.message(m).is_none());
     let answer = delete_answered(&mut s, account, MessageOutcome::Refused { status: 403 }, None);
-    assert_eq!(answer["errors"], json!(["Couldn't delete 'Invoice 42' for good: the server doesn't allow it."]));
+    assert_eq!(answer["errors"], json!(["Couldn't permanently delete 'Invoice 42': the server doesn't allow it."]));
     // Back as the server has it (unread, in the Inbox), with its text, and nothing to send.
     let back = s.mailbox.messages.values().find(|m| m.subject == "Invoice 42").unwrap();
     assert_eq!((back.folder, back.read, back.body.text.as_str()), (inbox, false, "Please pay by Friday."));
@@ -429,7 +429,7 @@ fn a_refused_delete_for_good_is_put_back_at_once_with_all_that_was_fetched() {
     let mut there = GraphMessage { subject: "Invoice 42".into(), ..Default::default() };
     there.server = ServerMessage { id: "M-1".into(), folder: "F-ar".into(), read: true, importance: Importance::High, ..Default::default() };
     let answer = delete_answered(&mut s, account, MessageOutcome::Refused { status: 400 }, Some(there.clone()));
-    assert_eq!(answer["errors"], json!(["Couldn't delete 'Invoice 42' for good: the server says it can't make that change."]));
+    assert_eq!(answer["errors"], json!(["Couldn't permanently delete 'Invoice 42': the server says it can't make that change."]));
     let archive = s.mailbox.folder_of_kind(account, FolderKind::Archive).unwrap();
     let back = s.mailbox.messages.values().find(|m| m.subject == "Invoice 42").unwrap();
     assert_eq!((back.folder, back.read, back.importance, back.body.text.as_str()), (archive, true, Importance::High, "Kept"));
@@ -537,13 +537,13 @@ fn outlooks_colours_win_for_the_categories_on_its_list() {
         categories: vec![mailcraft_model::Category { name: "Blue category".into(), color: mailcraft_model::Rgb(1, 2, 3) }],
     };
     s.run("sync.applyCategories", &json!({"download": download})).unwrap();
-    assert_eq!(s.mailbox.outlook_categories, ["Blue category"]);
-    let refused = s.run("category.set", &json!({"name": "blue category", "color": "#2E8B57"})).unwrap_err();
+    assert_eq!(s.mailbox.server_categories[&account], ["Blue category"]);
+    let refused = s.run("category.set", &json!({"account": account, "name": "blue category", "color": "#2E8B57"})).unwrap_err();
     assert_eq!(refused.to_string(), super::super::category::COLOUR_IN_OUTLOOK);
-    assert_eq!(s.mailbox.category("Blue category").unwrap().color, mailcraft_model::Rgb(1, 2, 3));
+    assert_eq!(s.mailbox.category_of(account, "Blue category").unwrap().color, mailcraft_model::Rgb(1, 2, 3));
     // One that isn't on Outlook's list takes the colour, and says it isn't there.
-    s.run("category.set", &json!({"name": "Travel", "color": "#2E8B57"})).unwrap();
-    let list = s.run("category.list", &json!({})).unwrap();
+    s.run("category.set", &json!({"account": account, "name": "Travel", "color": "#2E8B57"})).unwrap();
+    let list = s.run("category.list", &json!({"account": account})).unwrap();
     let outlook = |name: &str| list["categories"].as_array().unwrap().iter().find(|c| c["name"] == name).unwrap()["outlook"].clone();
     assert_eq!((outlook("Blue category"), outlook("Travel")), (json!(true), json!(false)));
     // An account that isn't kept in step through Graph has no such list.
@@ -568,4 +568,10 @@ fn a_message_the_server_wouldnt_give_is_passed_over_in_the_background_but_still_
     // Opened, it is.
     assert_eq!(graph_fetch_request(&s, account, Some(m), 1).unwrap().ids, ["M-1"]);
     assert!(s.mailbox.message(m).unwrap().unfetched);
+    // Given at last, in its own account: Exchange's stamp is its server's word, read here (#781).
+    let mime = b"From: boss@example.org\r\nX-MS-Exchange-Organization-AuthAs: Internal\r\n\r\nAll of it.\r\n".to_vec();
+    let fetched = vec![mailcraft_model::sync::GraphFetched { id: "M-1".into(), mime }];
+    apply_graph_fetch(&mut s, GraphFetchResult { account, email: "owner@example.org".into(), fetched, ..Default::default() }).unwrap();
+    let here = s.mailbox.message(m).unwrap();
+    assert!(!here.unfetched && here.fresh_stamps && here.headers.len() == 1, "{:?}", here.headers);
 }

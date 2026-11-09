@@ -39,6 +39,8 @@
 //! kept to go back to.
 //! `{"host": {"tasksWork": true}}` has every Microsoft account's To Do work, so that the window
 //! asks whether the tasks that exist only here are to be sent to it (#248).
+//! `{"host": {"autoReplies": "on"}}` gives every Microsoft account automatic replies that go out
+//! now, as a server has them; `"readOnly"`, the same read with a sign-in that may not change them.
 //! And a Graph job (`{"host": {"graph": …}}`): `"consent"` (Microsoft wants the owner's
 //! permission first), `"refused"` (it refused the sign-in) or `"sendConsent"` (a shared
 //! mailbox's mail waits for permission to send from shared mailboxes, #70), `"opened"` (the
@@ -62,6 +64,14 @@
 //! theme is given here. The opening screen shows after 0.3 s: `{"wait": 400}` before a shot.
 //!
 //! A folder of mailboxes being looked at (#420, `ui.dialog` `importTree`) never finishes; `{"host": {"treeProgress": [folders, files, messages]}}` sets the counts it shows, and `{"host": {"treeDir": "/path"}}` has it look into that folder at once.
+//! And setting up an Exchange server account (#252, E7): `{"host": {"ews":
+//! …}}` is how the job of Add Account for one ends, from that line on and for the job waiting when the
+//! line comes: `"waits"` (it is searching), `"consent autodiscover.other.example"` (the owner is
+//! asked before the sign-in goes to that host), `"works"`, `"online"` (the mailbox is in Microsoft
+//! 365), `"certificate"` (the system doesn't trust the server's, which has a made-up fingerprint),
+//! `"changed"` (the one the account trusted has changed), `"expired"` (a certificate nobody may trust),
+//! `"refused"` (the password was not accepted) or `"fails"` (nobody answered).
+//!
 //! And Send/Receive, for Send/Receive Progress (`{"host": {"sync": [[piece, …], …]}}`): one list
 //! of pieces for each run of an account from that line on, in turn, each piece a `sync.apply`
 //! result (`docs/control-protocol.md`) with its account filled in, and `"newMessages": n` to have
@@ -96,6 +106,7 @@ use mailcraft_engine::Session;
 use mailcraft_engine::io::{BackgroundSave, SaveProgress, SaveReport, SaveStage};
 use mailcraft_model::sync::{SyncResult, Tokens};
 use mailcraft_ui_egui::approval::{NEEDS_APPROVAL, NO_BROWSER, SIGN_IN_DECLINED, SIGN_IN_TIMED_OUT};
+use mailcraft_ui_egui::ews_setup::{EwsCertificate, EwsCertificateFault, EwsConsentReason, EwsSetupEnd, EwsSetupEvent, EwsSetupFailure};
 use mailcraft_ui_egui::{AdminConsentAnswer, ControlRequest, GraphResult, MailApp, Services};
 
 static READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -142,6 +153,9 @@ struct Host {
     alert_trouble: Option<mailcraft_ui_egui::alerts::AlertTrouble>,
     /// The window is not the one in front (see the header).
     unfocused: bool,
+    /// How Exchange server account setup ends (see the header), and the jobs that wait for it.
+    ews: String,
+    ews_jobs: Vec<Sender<EwsSetupEvent>>,
 }
 
 /// A stand-in for the system's notifications: every alert is taken (and shown nowhere), unless
@@ -255,8 +269,56 @@ impl Host {
         })
     }
 
+    /// What the job of Add Account for an Exchange server account is told now; `None` while it
+    /// is still searching. Every name and fingerprint in it is invented.
+    fn ews_event(&self) -> Option<EwsSetupEvent> {
+        const URL: &str = "https://mail.example.org/EWS/Exchange.asmx";
+        let certificate = |changed: bool| {
+            EwsSetupEnd::Certificate(EwsCertificate {
+                url: URL.into(),
+                fingerprint: if changed { "3f9a2c7e".repeat(8) } else { "a1b2c3d4".repeat(8) },
+                subject: "mail.example.org, Example Organisation".into(),
+                issuer: "Example Organisation Internal CA".into(),
+                not_before: 1_767_225_600,
+                not_after: 1_893_456_000,
+                changed,
+            })
+        };
+        let mut words = self.ews.split_whitespace();
+        Some(match words.next()? {
+            "waits" => return None,
+            "consent" => {
+                return Some(EwsSetupEvent::Consent {
+                    host: words.next().unwrap_or("autodiscover.other.example").into(),
+                    reason: EwsConsentReason::Redirect,
+                });
+            }
+            "works" => EwsSetupEvent::Finished(EwsSetupEnd::Works { url: URL.into(), signed_in_with: "basic".into() }),
+            "online" => EwsSetupEvent::Finished(EwsSetupEnd::ExchangeOnline),
+            "certificate" => EwsSetupEvent::Finished(certificate(false)),
+            "changed" => EwsSetupEvent::Finished(certificate(true)),
+            "expired" => EwsSetupEvent::Finished(EwsSetupEnd::Failed(EwsSetupFailure::Certificate(EwsCertificateFault::Expired))),
+            "ntlm" => EwsSetupEvent::Finished(EwsSetupEnd::Failed(EwsSetupFailure::SignInNtlm)),
+            "refused" => EwsSetupEvent::Finished(EwsSetupEnd::Failed(EwsSetupFailure::SignInRefused)),
+            _ => EwsSetupEvent::Finished(EwsSetupEnd::Failed(EwsSetupFailure::Unreachable)),
+        })
+    }
+
     /// Take in what a line of the script says, and answer what was waiting for it.
     fn told(&mut self, said: &serde_json::Value) {
+        if let Some(how) = said.get("ews").and_then(|v| v.as_str()) {
+            self.ews = how.to_string();
+            if let Some(event) = self.ews_event() {
+                // (A job that was asked a question goes on waiting for what comes after.)
+                let asks = matches!(event, EwsSetupEvent::Consent { .. });
+                for waiting in std::mem::take(&mut self.ews_jobs) {
+                    let _ = waiting.send(event.clone());
+                    if asks {
+                        self.ews_jobs.push(waiting);
+                    }
+                }
+            }
+        }
         if let Some(why) = said.get("alerts").and_then(|v| v.as_str()) {
             use mailcraft_ui_egui::alerts::AlertTrouble;
             self.alert_trouble = [AlertTrouble::NotInstalled, AlertTrouble::OutsideApp, AlertTrouble::TurnedOff, AlertTrouble::NoService]
@@ -366,11 +428,27 @@ fn stand_in(host: &Arc<Mutex<Host>>) -> Services {
     }
     let (signing, approving, updating, graphing, copying) = (host.clone(), host.clone(), host.clone(), host.clone(), host.clone());
     let syncing = host.clone();
+    let setting_up = host.clone();
     let searching = host.clone();
     let tree = host.clone();
     Services {
         microsoft_client_id: "11111111-2222-3333-4444-555555555555".into(),
         lookup_mx: Some(Box::new(|_| answered(Ok(vec!["example-org.mail.protection.outlook.com".to_string()])))),
+        ews_setup: Some(Box::new(move |_job| {
+            let (tx, rx) = channel();
+            let Ok(mut host) = setting_up.lock() else { return rx };
+            match host.ews_event() {
+                Some(event) => {
+                    let asks = matches!(event, EwsSetupEvent::Consent { .. });
+                    let _ = tx.send(event);
+                    if asks {
+                        host.ews_jobs.push(tx);
+                    }
+                }
+                None => host.ews_jobs.push(tx),
+            }
+            rx
+        })),
         sign_in: Some(Box::new(move |request| {
             let (tx, rx) = channel();
             let Ok(mut host) = signing.lock() else { return rx };
@@ -589,8 +667,6 @@ fn main() {
     // A word index beside a mailbox opened from a file (`file.open`), as the window keeps one
     // (R6.2); the sample is kept in no file and has none.
     session.index_words = true;
-    // Exchange server accounts, for the runs that try them (#252).
-    session.ews = std::env::var("MAILCRAFT_EWS").is_ok_and(|value| value.trim() == "1");
     // A stand-in for the host's part in signing in, when a line of the script speaks to one.
     let host: Arc<Mutex<Host>> = Default::default();
     let stood_in = lines.iter().any(|l| l.get("host").is_some());
@@ -694,6 +770,22 @@ fn main() {
             // Every Microsoft account's To Do works (the question about the local tasks follows).
             if said.get("tasksWork").is_some() {
                 harness.state_mut().stand_in_tasks_work();
+            }
+            // Every Microsoft account's automatic replies as a server has them: on (`"on"`), or
+            // on and only readable with the sign-in it has (`"readOnly"`).
+            if let Some(how) = said.get("autoReplies").and_then(|v| v.as_str()) {
+                let app = harness.state_mut();
+                let setting = mailcraft_model::auto_replies::AutoReplies::from_graph(&serde_json::json!({
+                    "status": "scheduled",
+                    "externalAudience": "contactsOnly",
+                    "scheduledStartDateTime": {"dateTime": "2026-10-14T09:00:00", "timeZone": "UTC"},
+                    "scheduledEndDateTime": {"dateTime": "2026-10-23T17:00:00", "timeZone": "UTC"},
+                    "internalReplyMessage": "<p>I'm away until Friday 23 October.</p><p>For anything urgent, ask bo@example.org.</p>",
+                    "externalReplyMessage": "<p>Thank you for your message. I'm out of the office until 23 October.</p>",
+                }));
+                for account in mailcraft_engine::cmd::auto_replies::reply_accounts(&app.session.mailbox) {
+                    let _ = app.stand_in_auto_replies(account, &setting, how != "readOnly");
+                }
             }
             // A search on the server is asked with a token of this session (invented).
             if said.get("serverSearch").is_some() {

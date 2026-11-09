@@ -5,7 +5,7 @@
 //!
 //! The pictures the corpus refers to are drawn here, in code.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, LazyLock, Mutex, mpsc};
 
 use egui::Color32;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -150,7 +150,15 @@ fn html_message(n: usize, from: (&str, &str), subject: &str, html: &str) -> Mess
 }
 
 /// The corpus as mail: the ordinary messages, the plain-text thread, then the hostile ones.
+/// Built once for the whole test binary: it holds messages of a million cells, and building it
+/// for every message a test asks for made one test take five minutes.
 pub(crate) fn corpus_messages() -> Vec<(&'static str, Message)> {
+    CORPUS.clone()
+}
+
+static CORPUS: LazyLock<Vec<(&'static str, Message)>> = LazyLock::new(build_corpus);
+
+fn build_corpus() -> Vec<(&'static str, Message)> {
     let mut out = vec![
         (
             "outlook reply",
@@ -233,7 +241,7 @@ fn large_newsletter() -> Message {
 fn in_frame<R>(dark: bool, f: impl FnOnce(&egui::Context) -> R) -> R {
     let ctx = egui::Context::default();
     ctx.set_fonts(crate::theme::font_definitions());
-    crate::theme::apply(&ctx, if dark { Appearance::Dark } else { Appearance::Light }.preference(None));
+    crate::theme::apply(&ctx, if dark { Appearance::Dark } else { Appearance::Light }.preference(None), &crate::theme::ThemeChoice::default());
     ctx.run_ui(egui::RawInput::default(), |_| {}).drop_without_applying_deltas();
     let mut out = None;
     let mut f = Some(f);
@@ -258,7 +266,7 @@ fn lay_out(ctx: &egui::Context, m: &Message, width: f32) -> Laid {
 }
 
 fn corpus_message(name: &str) -> Message {
-    corpus_messages().into_iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name} in the corpus")).1
+    CORPUS.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name} in the corpus")).1.clone()
 }
 
 /// The text of a laid-out piece.
@@ -369,7 +377,7 @@ fn write_the_corpus_as_a_mailbox() {
     std::fs::write(dir.join("corpus-ids.txt"), list).unwrap();
 }
 
-fn window(app: MailApp, size: (f32, f32)) -> egui_kittest::Harness<'static, MailApp> {
+pub(super) fn window(app: MailApp, size: (f32, f32)) -> egui_kittest::Harness<'static, MailApp> {
     let mut harness =
         egui_kittest::Harness::builder().with_accessibility_check(false).allow_missing_glyphs().with_size(egui::vec2(size.0, size.1)).build_ui_state(
             |ui, app: &mut MailApp| {
@@ -917,6 +925,169 @@ fn the_theme_changes_the_colours_of_a_message_that_is_open() {
     assert!(blue.b() > blue.r() && contrast(blue, Tokens::dark().surface) >= super::colors::TARGET_CONTRAST, "{blue:?}");
 }
 
+/// In the dark theme, an owner who keeps messages light reads them in the light theme's colours,
+/// as their senders made them, laid out again when the switch is turned, while the window around
+/// them stays dark. The original under a reply being written keeps the window's colours.
+#[test]
+fn messages_can_stay_light_in_the_dark_theme() {
+    let (app, ids) = corpus_app(false);
+    let id = id_of(&ids, "outlook reply");
+    let mut harness = window(app, (1280.0, 800.0));
+    let colours = |harness: &mut egui_kittest::Harness<'static, MailApp>| {
+        harness.run_steps(4);
+        super::view::kept(&harness.ctx, id, |laid, _| {
+            let colours = laid.items.iter().filter_map(|item| match &item.kind {
+                ItemKind::Text(text) => Some((text.paper, text.job.sections.iter().map(|s| s.format.color).collect::<Vec<_>>())),
+                ItemKind::Fill { color, .. } => Some((*color, Vec::new())),
+                _ => None,
+            });
+            colours.collect::<Vec<_>>()
+        })
+        .unwrap()
+    };
+    harness.state_mut().execute("ui.theme", json!({"value": "light"})).unwrap();
+    harness.state_mut().execute("mail.select", json!({"id": id})).unwrap();
+    let light = colours(&mut harness);
+    // In the light theme the page is the window's own: turning the switch lays nothing out again.
+    let begun = super::view::layouts_begun(&harness.ctx);
+    for value in [true, false] {
+        harness.state_mut().execute("ui.lightMessages", json!({"value": value})).unwrap();
+        assert_eq!(colours(&mut harness), light);
+    }
+    assert_eq!(super::view::layouts_begun(&harness.ctx), begun);
+    harness.state_mut().execute("ui.theme", json!({"value": "dark"})).unwrap();
+    let dark = colours(&mut harness);
+    assert_ne!(dark, light);
+
+    assert_eq!(harness.state_mut().execute("ui.lightMessages", json!({"value": true})).unwrap()["value"], true);
+    assert_eq!(colours(&mut harness), light);
+    assert!(harness.ctx.global_style().visuals.dark_mode, "the window stays dark");
+    assert!(super::view::on_light_page(harness.state(), Place::Pane) && super::view::on_light_page(harness.state(), Place::Window(1)));
+    assert!(!super::view::on_light_page(harness.state(), Place::Quote) && !super::view::on_light_page(harness.state(), Place::Preview));
+
+    // The page is painted light under the body in the pane, and in a message's own window.
+    assert_eq!(light_pages(&harness).len(), 1);
+    harness.state_mut().execute("ui.openWindow", json!({"message": id})).unwrap();
+    harness.run_steps(8);
+    assert_eq!(light_pages(&harness).len(), 2);
+
+    harness.state_mut().execute("ui.lightMessages", json!({"value": false})).unwrap();
+    assert_eq!(colours(&mut harness), dark);
+    assert_eq!(light_pages(&harness).len(), 0);
+}
+
+/// A message still being laid out when the owner keeps messages light and turns the window dark
+/// at once is laid out again: its page is still light, but what was begun without the light page
+/// must not go on in the dark window's colours.
+#[test]
+fn a_layout_begun_before_the_light_page_goes_on_in_its_colours() {
+    let (app, ids) = corpus_app(false);
+    let id = id_of(&ids, "one paragraph");
+    let mut harness = window(app, (1280.0, 800.0));
+    harness.state_mut().execute("ui.theme", json!({"value": "light"})).unwrap();
+    harness.state_mut().execute("mail.select", json!({"id": id})).unwrap();
+    harness.run_steps(2);
+    assert_eq!(super::view::kept(&harness.ctx, id, |laid, _| laid.done), Some(false));
+    harness.state_mut().execute("ui.lightMessages", json!({"value": true})).unwrap();
+    harness.state_mut().execute("ui.theme", json!({"value": "dark"})).unwrap();
+    for _ in 0..500 {
+        if super::view::kept(&harness.ctx, id, |laid, _| laid.done) == Some(true) {
+            break;
+        }
+        harness.step();
+    }
+    let inks = super::view::kept(&harness.ctx, id, |laid, _| {
+        let inks = laid.items.iter().filter_map(|item| match &item.kind {
+            ItemKind::Text(text) => Some(text.job.sections.iter().map(|s| s.format.color)),
+            _ => None,
+        });
+        (laid.done, inks.flatten().collect::<std::collections::HashSet<_>>())
+    })
+    .unwrap();
+    assert_eq!(inks, (true, std::collections::HashSet::from([Tokens::light().text])));
+}
+
+/// With messages kept light in the dark theme, what the owner writes keeps the window's colours:
+/// the original under a reply being written and File › Signatures' sample are laid out dark.
+#[test]
+fn the_owners_own_text_keeps_the_windows_colours() {
+    let mut app = MailApp::new(Session::at(mailcraft_engine::sample::mailbox(1_791_993_600, 0), 1_791_993_600, 0), Services::default());
+    app.autosave = false;
+    app.execute("ui.theme", json!({"value": "dark"})).unwrap();
+    app.execute("ui.lightMessages", json!({"value": true})).unwrap();
+    app.execute("signature.set", json!({"name": "Mine", "text": "Avery"})).unwrap();
+    app.execute("signature.open", json!({"name": "Mine"})).unwrap();
+    let id = app.session.mailbox.messages.values().find(|m| m.subject.starts_with("Five new arrivals")).map(|m| m.id).unwrap();
+    app.execute("mail.select", json!({"id": id})).unwrap();
+    app.execute("mail.reply", json!({"id": id})).unwrap();
+    let mut harness = window(app, (1280.0, 900.0));
+    harness.run_steps(4);
+    let inks = |harness: &Window, place: Place, id: u64| {
+        super::view::kept_at(&harness.ctx, place, id, |laid, _| {
+            let inks = laid.items.iter().filter_map(|item| match &item.kind {
+                ItemKind::Text(text) => Some(text.job.sections.iter().map(|s| s.format.color)),
+                _ => None,
+            });
+            inks.flatten().collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_else(|| panic!("nothing is laid out at {place:?}"))
+    };
+    let quote = inks(&harness, Place::Quote, id);
+    assert!(quote.contains(&Tokens::dark().text) && !quote.contains(&Tokens::light().text), "{quote:?}");
+    harness.state_mut().execute("ui.backstage", json!({"value": true, "page": "signatures"})).unwrap();
+    harness.run_steps(4);
+    // (VIP: the sample reply is numbered as a preview, so that its signature's pictures load.)
+    assert_eq!(inks(&harness, Place::Preview, super::remote::PREVIEW), std::collections::HashSet::from([Tokens::dark().text]));
+}
+
+/// On a light page in a dark window the body's scroll bar is the light theme's, not the dark
+/// window's on the white page.
+#[test]
+fn a_light_page_scrolls_with_the_light_themes_bar() {
+    let (app, ids) = corpus_app(false);
+    let id = id_of(&ids, "one paragraph");
+    let mut harness = window(app, (1280.0, 800.0));
+    harness.state_mut().execute("ui.theme", json!({"value": "dark"})).unwrap();
+    harness.state_mut().execute("ui.lightMessages", json!({"value": true})).unwrap();
+    harness.state_mut().execute("mail.select", json!({"id": id})).unwrap();
+    harness.run_steps(4);
+    // The bar floats in sight while the pointer is over the body.
+    let page = light_pages(&harness)[0];
+    harness.event(egui::Event::PointerMoved(page.center()));
+    harness.run_steps(30);
+    let scroll = harness.ctx.global_style().spacing.scroll;
+    let bar = rects(&harness).into_iter().filter(|r| page.contains_rect(r.rect) && r.rect.width() <= scroll.bar_width && r.fill.a() > 0);
+    let light = Tokens::light();
+    assert_eq!(
+        bar.map(|r| r.fill).collect::<std::collections::HashSet<_>>(),
+        std::collections::HashSet::from([
+            light.input.gamma_multiply(scroll.active_background_opacity),
+            light.text.gamma_multiply(scroll.active_handle_opacity)
+        ])
+    );
+}
+
+/// Every rectangle painted in the last frame.
+fn rects(harness: &Window) -> Vec<egui::epaint::RectShape> {
+    fn walk(shape: &egui::Shape, rects: &mut Vec<egui::epaint::RectShape>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, rects)),
+            egui::Shape::Rect(r) => rects.push(r.clone()),
+            _ => {}
+        }
+    }
+    let mut rects = Vec::new();
+    harness.output().shapes.iter().for_each(|s| walk(&s.shape, &mut rects));
+    rects
+}
+
+/// The light pages painted in the last frame: rectangles in the light theme's surface colour
+/// taller and wider than a block of a message.
+fn light_pages(harness: &Window) -> Vec<egui::Rect> {
+    let pages = rects(harness).into_iter().filter(|r| r.fill == Tokens::light().surface && r.rect.width() > 300.0 && r.rect.height() > 300.0);
+    pages.map(|r| r.rect).collect()
+}
+
 /// Generous bounds: this is an unoptimised build of this crate, on whatever machine runs the
 /// tests. What it takes is printed (`--nocapture`).
 #[test]
@@ -1007,8 +1178,8 @@ fn the_reading_pane_names_nothing_that_could_fetch() {
         checked += 1;
     }
     assert_eq!(
-        checked, 13,
-        "reading.rs, colors, images (and its tests), invitation, layout, remote, select, sharing (and its tests), view and warnings (and its tests)"
+        checked, 18,
+        "reading.rs, colors (and its tests), fonts (and its tests), header tests, images (and its tests), invitation, layout, remote, select, sharing (and its tests), view (and its zoom tests) and warnings (and its tests)"
     );
 }
 
@@ -1121,7 +1292,7 @@ fn newsletter_picture(url: &str) -> Result<Vec<u8>, String> {
 }
 
 /// A message whose body is these pictures on the web, one under the other.
-fn web_message(n: usize, from: &str, subject: &str, pictures: &[String]) -> Message {
+pub(super) fn web_message(n: usize, from: &str, subject: &str, pictures: &[String]) -> Message {
     let html: String = pictures.iter().map(|src| format!("<p>Picture:</p><img src=\"{src}\" width=40 height=30 alt=\"A picture\">")).collect();
     message(n, ("A Sender", from), subject, Some(html), String::new())
 }
@@ -1131,7 +1302,7 @@ fn web_pictures(host: &str, count: usize) -> Vec<String> {
 }
 
 /// A window on a mailbox that holds `messages`, and their ids.
-fn app_with(messages: Vec<Message>) -> (MailApp, Vec<u64>) {
+pub(super) fn app_with(messages: Vec<Message>) -> (MailApp, Vec<u64>) {
     let mut mailbox = Mailbox::with_local_account("Avery Quinn", "avery@lumen-works.example");
     served_by_example_org(&mut mailbox);
     let inbox = mailbox.inbox().unwrap();
@@ -1154,7 +1325,7 @@ fn click_at(harness: &mut Window, pos: egui::Pos2) {
     harness.run_steps(2);
 }
 
-fn select(harness: &mut Window, id: u64) {
+pub(super) fn select(harness: &mut Window, id: u64) {
     harness.state_mut().execute("mail.select", json!({"id": id})).unwrap();
     harness.run_steps(6);
 }
@@ -3866,7 +4037,7 @@ fn the_original_under_a_reply_can_be_copied() {
     app.execute("mail.reply", json!({"id": id})).unwrap();
     app.execute("compose.set", json!({"body": "Mine alone"})).unwrap();
     app.execute("compose.select", json!({"from": 0, "to": 4})).unwrap();
-    app.body_focus_wanted = true;
+    app.want_body_focus();
     let mut harness = window(app, (1280.0, 900.0));
     harness.run_steps(4);
     assert!(crate::compose::editor::has_focus(&harness.ctx), "the owner's text has the keyboard");
@@ -3973,6 +4144,23 @@ fn a_row_of_small_pictures_stays_a_row_where_it_fits() {
         // Where they don't fit, they are stacked as before.
         let laid = lay_out(ctx, &m, 100.0);
         assert_eq!(laid.stats.stacked, 1);
+    });
+}
+
+#[test]
+fn small_pictures_in_a_table_in_a_centred_cell_stand_in_the_middle() {
+    // The table's text and pictures start at the left of their cells, as in a browser, and the
+    // cells are as wide as the pictures: so the table, centred, has them in the middle.
+    let icon = |name: &str| format!("<td style='padding:0 4px'><img src='cid:{name}@quillon.example' width='16' height='16' alt='{name}'></td>");
+    let html =
+        format!("<table width='100%'><tr><td align='center'><table><tr>{}{}</tr></table></td></tr></table>", icon("tick-16"), icon("cross-16"));
+    let m = html_message(52, ("Digest", "digest@bellweather.example"), "Icons", &html);
+    in_frame(false, |ctx| {
+        let laid = lay_out(ctx, &m, 600.0);
+        let pictures = shown_pictures(&laid);
+        assert_eq!(pictures.len(), 2, "{pictures:?}");
+        let centre = (pictures[0].rect.min.x + pictures[1].rect.max.x) / 2.0;
+        assert!((centre - 300.0).abs() < 0.5, "{:?} {:?}", pictures[0].rect, pictures[1].rect);
     });
 }
 
@@ -4100,6 +4288,176 @@ fn a_link_tip_shows_the_host_of_addresses_written_to_mislead() {
     // A full stop of another script is no full stop, and the name is not shown as ours.
     assert_eq!(super::view::link_tip("https://paypal\u{3002}com/"), "https://paypal\u{3002}com/");
     assert!(goes_to("https://\u{1f4a9}.example/").contains("xn--"));
+}
+
+// ---- tables floated to a side, and a frame drawn with the lines of cells ----
+
+/// A bill: a greeting beside a framed notice (two tables floated left, in shares of the width),
+/// and labels at the left with their values at the right (a table floated each way). The notice's
+/// frame is drawn with the lines of cells, its picture spanning the two corner columns.
+const BILL: &str = "<table width='100%' cellpadding=0 cellspacing=0><tr><td align='center'>\
+    <table width='100%' cellpadding=0 cellspacing=0><tr><td valign='top'>\
+      <table width='55%' align='left' cellpadding=0 cellspacing=0>\
+        <tr><td align='left' style='font-size:24px;font-weight:bold;padding:16px 0 10px 20px'>Good morning,</td></tr>\
+        <tr><td style='padding:0 0 20px 20px'>we have issued your invoice.</td></tr></table>\
+      <table width='42%' align='left'><tr><td>\
+        <table width='100%' align='right' cellpadding=0 cellspacing=0>\
+          <tr><td width=20 height=5></td><td width=20 style='border-left:2px solid #7f7f7f;border-top:2px solid #7f7f7f'></td><td style='border-right:2px solid #7f7f7f;border-top:2px solid #7f7f7f'></td></tr>\
+          <tr><td colspan=2 align=center><img src='cid:shield@notices.example' width=17></td><td style='padding:0 10px;border-right:2px solid #7f7f7f'>Stay safe</td></tr>\
+          <tr><td width=10>&nbsp;</td><td style='border-left:2px solid #7f7f7f;border-bottom:2px solid #7f7f7f'>&nbsp;</td>\
+              <td align='left' style='padding:0 10px 10px 10px;width:100%;border-right:2px solid #7f7f7f;border-bottom:2px solid #7f7f7f'>Check that the sender is ours.</td></tr>\
+        </table></td></tr></table>\
+    </td></tr>\
+    <tr><td style='padding:0 20px 5px 20px'>\
+      <table align='left' cellpadding=0 cellspacing=0><tr><td align='left' style='white-space:nowrap'>Invoice number</td></tr></table>\
+      <table align='right' cellpadding=0 cellspacing=0><tr><td align='right' style='white-space:nowrap'>INV-0001/10/26</td></tr></table>\
+    </td></tr>\
+    <tr><td style='padding:0 20px 5px 20px'>\
+      <table width='35%' align='left' cellpadding=0 cellspacing=0><tr><td align='left' style='white-space:nowrap'>Bank account</td></tr></table>\
+      <table align='right' cellpadding=0 cellspacing=0><tr><td align='right' style='white-space:nowrap'>00 1111 2222 3333 4444 5555 6666</td></tr></table>\
+    </td></tr></table></td></tr></table>";
+
+/// The nearest line down the side of a cell to the right of `item`, in its height.
+fn line_right_of(laid: &Laid, item: &Item) -> Option<egui::Rect> {
+    laid.items
+        .iter()
+        .filter(|i| matches!(i.kind, ItemKind::Fill { .. }) && i.rect.width() <= 4.0 && i.rect.height() >= 4.0)
+        .map(|i| i.rect)
+        .filter(|r| r.min.x >= item.rect.max.x - 0.5 && r.min.y < item.rect.max.y && r.max.y > item.rect.min.y)
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+}
+
+#[test]
+fn tables_floated_left_and_right_stand_on_one_line_and_a_frame_keeps_its_heading() {
+    let m = html_message(53, ("Billing", "billing@notices.example"), "Invoice", BILL);
+    for dark in [false, true] {
+        in_frame(dark, |ctx| {
+            let laid = lay_out(ctx, &m, 700.0);
+            check(&laid, &Tokens::get(ctx), "bill");
+            // A label at the left of the line, its value at the right of the same line.
+            for (label, value) in [("Invoice number", "INV-0001/10/26"), ("Bank account", "00 1111 2222 3333 4444 5555 6666")] {
+                let (label, value) = (find_exact(&laid, label), find_exact(&laid, value));
+                assert!((label.rect.min.y - value.rect.min.y).abs() < 1.0, "{:?} {:?}", label.rect, value.rect);
+                assert!(label.rect.min.x < 40.0 && value.rect.max.x > 700.0 - 40.0, "{:?} {:?}", label.rect, value.rect);
+            }
+            // The greeting and the notice side by side, the notice at the right of the greeting.
+            let (greeting, heading) = (find_exact(&laid, "Good morning,"), find_exact(&laid, "Stay safe"));
+            assert!(
+                heading.rect.min.x > greeting.rect.max.x && heading.rect.min.y < greeting.rect.max.y + 30.0,
+                "{:?} {:?}",
+                greeting.rect,
+                heading.rect
+            );
+            // The heading is inside the frame: the line at its right is the frame's, the one at
+            // the right of the notice's text.
+            let text = find_exact(&laid, "Check that the sender is ours.");
+            let (beside_heading, beside_text) = (line_right_of(&laid, heading), line_right_of(&laid, text));
+            assert!(beside_heading.zip(beside_text).is_some_and(|(a, b)| (a.min.x - b.min.x).abs() < 1.0), "{beside_heading:?} {beside_text:?}");
+            assert!(heading.rect.min.x > text.rect.min.x - 1.0, "{:?} {:?}", heading.rect, text.rect);
+        });
+    }
+}
+
+#[test]
+fn a_label_and_its_value_never_overlap_however_narrow_the_pane() {
+    let m = html_message(54, ("Billing", "billing@notices.example"), "Invoice", BILL);
+    in_frame(false, |ctx| {
+        for width in [300.0, 360.0, 420.0, 520.0, 700.0, 1000.0] {
+            let laid = lay_out(ctx, &m, width);
+            check(&laid, &Tokens::get(ctx), "bill");
+            let (label, value) = (find_exact(&laid, "Bank account"), find_exact(&laid, "00 1111 2222 3333 4444 5555 6666"));
+            assert!(!label.rect.intersects(value.rect), "{width}: {:?} {:?}", label.rect, value.rect);
+            // At the right edge, on its line or the one below.
+            assert!(value.rect.max.x > width - 40.0 && value.rect.max.x <= width + 0.5, "{width}: {:?}", value.rect);
+        }
+    });
+}
+
+/// Tables floated side by side whose words need more than the share of the width they ask for:
+/// a data table of four columns beside an address; a two-column table beside a long note; five
+/// short columns in 55 % beside 42 %. Each a pair floated left and right, and both floated left.
+fn wider_than_their_share() -> Vec<(&'static str, String)> {
+    let order = "<table align='{a}' width='48%' border='1'><tr><th>Item</th><th>Quantity</th><th>Unit price</th><th>Total</th></tr>\
+        <tr><td>Garden hose</td><td>2</td><td>10.00</td><td>20.00</td></tr></table>";
+    let address = "<table align='{b}' width='48%'><tr><td>Ship to: Ada Example, 1 Sample Street, Exampleton</td></tr></table>";
+    let reference = "<table align='{a}' width='30%'><tr><td>Reference</td><td>Department</td></tr></table>";
+    let note = "<table align='{b}' width='65%'><tr><td>Please keep this note with your records until the order has arrived.</td></tr></table>";
+    let five = "<table align='{a}' width='55%'><tr><td>Mon</td><td>Tue</td><td>Wed</td><td>Thu</td><td>Fri</td></tr></table>";
+    let beside = "<table align='{b}' width='42%'><tr><td>Opening hours of the shop</td></tr></table>";
+    let mut out = Vec::new();
+    for (name, first, second) in [("order", order, address), ("reference", reference, note), ("five", five, beside)] {
+        for (a, b) in [("left", "right"), ("right", "left"), ("left", "left")] {
+            let pair = format!("{}{}", first.replace("{a}", a), second.replace("{b}", b));
+            out.push((name, format!("<table width='100%'><tr><td>{pair}</td></tr></table>")));
+        }
+    }
+    out
+}
+
+#[test]
+fn tables_floated_side_by_side_never_overlap_when_their_words_need_more_than_their_share() {
+    in_frame(false, |ctx| {
+        for (name, html) in wider_than_their_share() {
+            let m = html_message(55, ("Shop", "orders@shop.example"), "Order", &html);
+            for width in [240.0, 300.0, 360.0, 400.0, 440.0, 520.0, 700.0] {
+                let laid = lay_out(ctx, &m, width);
+                check(&laid, &Tokens::get(ctx), name);
+                let words: Vec<&Item> = laid.items.iter().filter(|i| !text_of(i).trim().is_empty()).collect();
+                // Each fits the pane: none runs past its right edge.
+                assert!(
+                    words.iter().all(|w| w.rect.max.x <= width + 0.5),
+                    "{name} at {width}: {:?}",
+                    words.iter().map(|w| (text_of(w), w.rect)).collect::<Vec<_>>()
+                );
+                for (n, a) in words.iter().enumerate() {
+                    for b in words.iter().skip(n + 1) {
+                        assert!(
+                            !a.rect.shrink(0.5).intersects(b.rect.shrink(0.5)),
+                            "{name} at {width}: {:?} {:?} {:?} {:?}",
+                            text_of(a),
+                            a.rect,
+                            text_of(b),
+                            b.rect
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn a_column_or_a_pair_in_a_centred_or_right_aligned_cell_stands_where_it_puts_them() {
+    in_frame(false, |ctx| {
+        for (attr, start) in [("center", 60.0), ("right", 120.0)] {
+            // A column four fifths of the 600-pixel cell: in the middle, or at the right, its text
+            // at its left.
+            let html = format!(
+                "<table width='600' cellpadding=0 cellspacing=0><tr><td align='{attr}'><table width='80%' cellpadding=0 cellspacing=0><tr><td>Hello there</td></tr></table></td></tr></table>"
+            );
+            let m = html_message(56, ("Shop", "news@shop.example"), "Column", &html);
+            let laid = lay_out(ctx, &m, 700.0);
+            check(&laid, &Tokens::get(ctx), "column");
+            let hello = find_exact(&laid, "Hello there");
+            assert!((hello.rect.min.x - start).abs() < 2.0, "{attr}: {:?}", hello.rect);
+            // A label and its value floated in a wrapper of no width: together, where the cell's
+            // align says.
+            let html = format!(
+                "<table width='600' cellpadding=0 cellspacing=0><tr><td align='{attr}'><table cellpadding=0 cellspacing=0><tr><td>\
+                   <table align='left' cellpadding=0 cellspacing=0><tr><td>Label</td></tr></table>\
+                   <table align='right' cellpadding=0 cellspacing=0><tr><td>Value</td></tr></table>\
+                 </td></tr></table></td></tr></table>"
+            );
+            let m = html_message(57, ("Shop", "news@shop.example"), "Pair", &html);
+            let laid = lay_out(ctx, &m, 700.0);
+            check(&laid, &Tokens::get(ctx), "pair");
+            let (label, value) = (find_exact(&laid, "Label"), find_exact(&laid, "Value"));
+            assert!((label.rect.min.y - value.rect.min.y).abs() < 1.0, "{attr}: {:?} {:?}", label.rect, value.rect);
+            assert!(label.rect.max.x <= value.rect.min.x && value.rect.min.x - label.rect.max.x < 12.0, "{attr}: {:?} {:?}", label.rect, value.rect);
+            let at = if attr == "right" { value.rect.max.x - 600.0 } else { (label.rect.min.x + value.rect.max.x) / 2.0 - 300.0 };
+            assert!(at.abs() < 2.0, "{attr}: {:?} {:?}", label.rect, value.rect);
+        }
+    });
 }
 
 // ---- #596: where a cell sits in its row, and the gaps between cells ----

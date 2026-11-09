@@ -23,7 +23,7 @@
 //! (`SyncFolderHierarchy`, `SyncFolderItems`): an opaque string. It is kept in the mailbox file,
 //! with what it brought, in one step: the account's is [`crate::EwsServer::hierarchy`], a folder's
 //! is [`crate::ServerFolder::sync_state`]. An answer carries them in
-//! [`EwsMailResult::hierarchy`] and [`EwsMailResult::states`], and taking a piece in puts a state
+//! [`EwsMailResult::hierarchy`] and, one to each page, [`EwsMessagePage::state`], and taking a piece in puts a state
 //! and the folders and messages it brought in together, like Graph's links; `link` and
 //! `caught_up` of Graph's [`MessagePage`](super::MessagePage) are never used for Exchange, which
 //! has pages of its own ([`EwsMessagePage`]). A state the server no longer knows
@@ -34,9 +34,12 @@
 //! folders), not as a complete listing: [`EwsFolderDeltas`], keyed by the folders' opaque ids.
 //!
 //! **Server ids.** An Exchange item is named by an `Id` and a `ChangeKey`, and the change key
-//! changes with the item. Here both are one opaque string (`id` of [`ServerMessage`](super::ServerMessage)
-//! and of [`GraphFolder`]), whose encoding only `mailcraft-ews` knows; nothing else looks inside
-//! it or relies on its shape. It is at most [`MAX_EWS_ID`] bytes, with no control character.
+//! changes with every edit. A message is matched by its `Id` alone (`id` of
+//! [`ServerMessage`](super::ServerMessage)), so that an edit made elsewhere is the same message; the
+//! change key is kept apart (`change_key` of the same, where a later step's changes up read it).
+//! A folder's `id` ([`GraphFolder`]) is its `Id`. Both are opaque: only `mailcraft-ews` knows what
+//! they are made of, and nothing else relies on their shape. Each is at most [`MAX_EWS_ID`]
+//! bytes, with no control character.
 //!
 //! No type shows the server's address, the user name, the account's address, a sync state or a
 //! message in debug output: counts only. The password that opens the server is handed to the host
@@ -45,8 +48,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    DraftDone, DraftUp, FolderChange, FolderChangeDone, GraphFolder, GraphMessage, GraphProgress, MAX_LISTED_FOLDERS, MessageChange,
-    MessageChangeDone, PlaceDone, PlaceUp, ReadState, SendDone, SendUp, is_false,
+    DraftDone, DraftUp, FolderChange, FolderChangeDone, GraphFolder, GraphMessage, GraphProgress, MAX_LISTED_FOLDERS, MAX_THREAD_ASKS, MessageChange,
+    MessageChangeDone, PlaceDone, PlaceUp, ReadState, SendDone, SendUp, ThreadOf, Timings, is_false,
 };
 use crate::Id;
 
@@ -67,9 +70,13 @@ pub const MAX_EWS_ERROR: usize = 1000;
 /// Most folders whose sync state a request or an answer carries.
 pub const MAX_EWS_STATES: usize = 10_000;
 
-/// Longest sync state, in bytes, that is kept or handed back: the server's own are short, so a
-/// longer one is not one.
-pub const MAX_EWS_STATE: usize = 8192;
+/// Longest sync state, in bytes, that is kept or handed back. The server's own grow with the
+/// folder (a compressed record of the items it has told of, some tens of kilobytes for a large
+/// folder), so the limit is a megabyte; a longer one is not one, and the folder is read afresh.
+pub const MAX_EWS_STATE: usize = 1 << 20;
+
+/// Most sync-state bytes one piece of an answer carries in all.
+pub const MAX_EWS_STATE_BYTES: usize = 32 << 20;
 
 /// Which folders a run reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +173,10 @@ pub struct EwsMailRequest {
     /// Nobody is waiting for this run: it gets the share of requests background work has.
     #[serde(skip_serializing_if = "is_false")]
     pub background: bool,
+    /// Messages listed before their conversation ids were asked for, by server id: the server is
+    /// asked for those ids after the rest of the run, at most [`MAX_THREAD_ASKS`] (#795).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<String>,
 }
 
 /// Messages of an Exchange server account to fetch whole (their MIME content), by server id, in
@@ -212,11 +223,17 @@ pub struct EwsFolderDeltas {
     /// removed when the run ends. Otherwise it is a delta and nothing is removed for not being in it.
     #[serde(skip_serializing_if = "is_false")]
     pub afresh: bool,
+    /// The ids of the server's own folders (its distinguished ones: the Inbox and the other
+    /// special folders, Conversation History, Sync Issues and the like, #779), whether or not the
+    /// delta brings them: such a folder is never renamed, moved or deleted
+    /// ([`crate::Folder::server_owned`]). A folder that isn't in it keeps the mark it had.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub well_known: Vec<String>,
 }
 
 /// One page of a folder's changes (`SyncFolderItems`). The state to go on from is not here but in
-/// [`EwsMailResult::states`], taken in with it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// [`EwsMessagePage::state`], taken in with it.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct EwsMessagePage {
     /// The folder's server id.
@@ -238,6 +255,14 @@ pub struct EwsMessagePage {
     /// the folder, and what the fresh read doesn't have is removed when it ends (`last`).
     #[serde(skip_serializing_if = "is_false")]
     pub afresh: bool,
+    /// The sync state this page was read from (empty: from the folder's start). A page is taken in
+    /// only when the folder is at that state (or the page is the start of a fresh read), so that a
+    /// page whose predecessor was refused or cut can never move the folder past what was lost.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub from: String,
+    /// The sync state that goes on from this page: kept with it, in one step. Empty: none is kept.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub state: String,
 }
 
 /// What a run for an Exchange server account brought back, or a piece of it.
@@ -249,6 +274,11 @@ pub struct EwsMessagePage {
 #[serde(default, rename_all = "camelCase")]
 pub struct EwsMailResult {
     pub account: Id,
+    /// What the server said of the conversations of the messages the run asked about
+    /// ([`EwsMailRequest::threads`], #795).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadOf>,
+
     /// The address of the account the run was for: an answer is not taken in by another account
     /// that happens to have the id.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -283,9 +313,10 @@ pub struct EwsMailResult {
     /// The pages of messages read, in the order they came: each is taken in by itself.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<EwsMessagePage>,
-    /// Where each folder read goes on from now.
+    /// The folders (server ids) whose pages hold a change that can't be taken in: each stays where
+    /// it was, is read again next time, and blocks the end of the run that would sweep.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub states: Vec<EwsFolderState>,
+    pub blocked: Vec<String>,
     /// Problems worth telling the owner; empty when all went well.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
@@ -315,6 +346,14 @@ pub struct EwsMailResult {
     /// trust it for this account.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub untrusted: String,
+    /// How the run signed in, `basic` or `ntlm` (what File › Info says of the account); empty when
+    /// it never got as far as the server's offer.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub signed_in_with: String,
+    /// How long this piece's part of the run took, and how many requests it made (#276, #748):
+    /// measured by the host, which makes the requests.
+    #[serde(skip_serializing_if = "Timings::is_empty")]
+    pub timings: Timings,
 }
 
 /// Whether `id` may be a server id of a folder or an item: not empty, at most [`MAX_EWS_ID`] bytes,
@@ -328,7 +367,38 @@ fn state_ok(state: &str) -> bool {
     state.len() <= MAX_EWS_STATE && !state.chars().any(char::is_control)
 }
 
+/// Longest subject, `Message-ID`, preview, name and address, in bytes, and the most people in a
+/// list and categories, that are taken in at all (they are cut to what is shown after that): a
+/// server's answer is held to what any real message has, generously.
+const MAX_TEXT: usize = 16 * 1024;
+const MAX_PEOPLE: usize = 1_000;
+const MAX_CATEGORIES: usize = 200;
+
+/// Whether a message of a page is within the sizes of its text: the subject, the preview, the
+/// `Message-ID`, the names and addresses, the categories and the change key.
+fn message_content_ok(m: &GraphMessage) -> bool {
+    let person = |a: &crate::Address| a.name.len() <= MAX_TEXT && a.email.len() <= MAX_TEXT;
+    m.subject.len() <= MAX_TEXT
+        && m.preview.len() <= MAX_TEXT
+        && m.message_id.len() <= MAX_TEXT
+        && m.server.change_key.len() <= MAX_EWS_ID
+        && m.server.categories.len() <= MAX_CATEGORIES
+        && m.server.categories.iter().all(|c| c.len() <= MAX_TEXT)
+        && person(&m.from)
+        && m.to.len() <= MAX_PEOPLE
+        && m.cc.len() <= MAX_PEOPLE
+        && m.to.iter().chain(&m.cc).all(person)
+}
+
 impl EwsMailResult {
+    /// Whether the server answered a request of the run's with what it holds (its folders, or a
+    /// page of a folder's messages): it took the password the run went with (#802). Not
+    /// [`signed_in_with`](Self::signed_in_with), which the server's offer sets before it has
+    /// taken anything.
+    pub fn server_answered(&self) -> bool {
+        self.folders.is_some() || !self.pages.is_empty()
+    }
+
     /// Whether this piece of an answer is within what is taken in, or why not. An answer comes
     /// from a host and may say anything: every list, string and id is held to a size here, before
     /// any of it is used. A piece that is refused is taken in by no part, so a cut-short answer
@@ -339,7 +409,7 @@ impl EwsMailResult {
         if self.email.len() > crate::EwsServer::MAX_USERNAME || self.url.len() > crate::EwsServer::MAX_URL {
             return Err("names an account or a server that is too long");
         }
-        if self.states.len() > MAX_EWS_STATES || self.pages.len() > MAX_EWS_PAGES || self.errors.len() > MAX_EWS_ERRORS {
+        if self.pages.len() > MAX_EWS_PAGES || self.errors.len() > MAX_EWS_ERRORS {
             return Err(TOO_MANY);
         }
         if self.changes.len() > super::MAX_FOLDER_CHANGES
@@ -350,6 +420,15 @@ impl EwsMailResult {
         {
             return Err(TOO_MANY);
         }
+        if self.blocked.len() > MAX_LISTED_FOLDERS || !self.blocked.iter().all(|id| id_ok(id)) {
+            return Err(ODD_ID);
+        }
+        if self.threads.len() > MAX_THREAD_ASKS {
+            return Err(TOO_MANY);
+        }
+        if !self.threads.iter().all(|t| id_ok(&t.id) && t.thread.len() <= super::MAX_THREAD_ID) {
+            return Err(ODD_ID);
+        }
         if !state_ok(&self.hierarchy) {
             return Err("has a folder state that can't be one");
         }
@@ -359,20 +438,24 @@ impl EwsMailResult {
         if crate::EwsServer::check_fingerprint(&self.untrusted).is_err() {
             return Err("has a certificate fingerprint that can't be one");
         }
-        for state in &self.states {
-            if !id_ok(&state.folder) {
-                return Err(ODD_ID);
-            }
-            if !state_ok(&state.state) {
-                return Err("has a sync state that can't be one");
-            }
+        if !matches!(self.signed_in_with.as_str(), "" | "basic" | "ntlm") {
+            return Err("has a way of signing in that MailCraft doesn't speak");
+        }
+        if self.pages.iter().map(|p| p.state.len().saturating_add(p.from.len())).fold(0usize, usize::saturating_add) > MAX_EWS_STATE_BYTES {
+            return Err(TOO_MANY);
+        }
+        if self.pages.iter().any(|p| !state_ok(&p.state) || !state_ok(&p.from)) {
+            return Err("has a sync state that can't be one");
         }
         if let Some(folders) = &self.folders {
-            if folders.changed.len() > MAX_LISTED_FOLDERS || folders.deleted.len() > MAX_LISTED_FOLDERS {
+            if folders.changed.len() > MAX_LISTED_FOLDERS
+                || folders.deleted.len() > MAX_LISTED_FOLDERS
+                || folders.well_known.len() > MAX_LISTED_FOLDERS
+            {
                 return Err(TOO_MANY);
             }
             let odd = |f: &GraphFolder| !id_ok(&f.id) || (!f.parent.is_empty() && !id_ok(&f.parent)) || f.name.len() > 4096;
-            if folders.changed.iter().any(odd) || !folders.deleted.iter().all(|id| id_ok(id)) {
+            if folders.changed.iter().any(odd) || !folders.deleted.iter().all(|id| id_ok(id)) || !folders.well_known.iter().all(|id| id_ok(id)) {
                 return Err(ODD_ID);
             }
         }
@@ -381,6 +464,9 @@ impl EwsMailResult {
                 return Err(TOO_MANY);
             }
             let message_odd = |m: &GraphMessage| !id_ok(&m.server.id) || (!m.server.folder.is_empty() && !id_ok(&m.server.folder));
+            if page.messages.iter().any(|m| !message_content_ok(m)) {
+                return Err("has a message whose text is longer than is taken in");
+            }
             if !id_ok(&page.folder)
                 || page.messages.iter().any(message_odd)
                 || !page.removed.iter().all(|id| id_ok(id))
@@ -412,12 +498,14 @@ impl EwsMailResult {
             folders.changed.extend(more.changed);
             folders.deleted.extend(more.deleted);
             folders.afresh |= more.afresh;
+            folders.well_known.extend(more.well_known);
         }
         if !piece.hierarchy.is_empty() {
             self.hierarchy = piece.hierarchy;
         }
         self.pages.extend(piece.pages);
-        self.states.extend(piece.states);
+        self.blocked.extend(piece.blocked);
+        self.threads.extend(piece.threads);
         self.errors.extend(piece.errors);
         self.busy_for = piece.busy_for.or(self.busy_for);
         (self.partial, self.whole, self.stopped) = (piece.partial, piece.whole, piece.stopped);
@@ -428,6 +516,20 @@ impl EwsMailResult {
         if !piece.untrusted.is_empty() {
             self.untrusted = piece.untrusted;
         }
+    }
+}
+
+/// Counts and flags: neither a server's id nor a sync state is ever shown.
+impl std::fmt::Debug for EwsMessagePage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EwsMessagePage")
+            .field("messages", &self.messages.len())
+            .field("removed", &self.removed.len())
+            .field("read", &self.read.len())
+            .field("last", &self.last)
+            .field("afresh", &self.afresh)
+            .field("state", &!self.state.is_empty())
+            .finish()
     }
 }
 
@@ -447,7 +549,6 @@ impl std::fmt::Debug for EwsMailRequest {
             .field("trusted", &!self.trusted.is_empty())
             .field("list_folders", &self.list_folders)
             .field("scope", &self.scope.describe())
-            .field("states", &self.states.len())
             .field("changes", &self.changes.len())
             .field("messages", &self.messages.len())
             .field("drafts", &self.drafts.len())
@@ -485,8 +586,8 @@ impl std::fmt::Debug for EwsMailResult {
             .field("placed", &self.placed.len())
             .field("folders", &self.folders.as_ref().map(|folders| (folders.changed.len(), folders.deleted.len(), folders.afresh)))
             .field("pages", &self.pages.len())
+            .field("blocked", &self.blocked.len())
             .field("messages", &messages)
-            .field("states", &self.states.len())
             .field("errors", &self.errors.len())
             .field("busy_for", &self.busy_for)
             .field("partial", &self.partial)
@@ -495,6 +596,8 @@ impl std::fmt::Debug for EwsMailResult {
             .field("progress", &self.progress.is_some())
             .field("auth_refused", &self.auth_refused)
             .field("untrusted", &!self.untrusted.is_empty())
+            .field("signed_in_with", &self.signed_in_with)
+            .field("timings", &self.timings)
             .finish()
     }
 }

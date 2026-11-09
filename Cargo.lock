@@ -475,6 +475,12 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
@@ -985,6 +991,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "data-url"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1459,6 +1471,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
+
+[[package]]
 name = "fmv-macos-events"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1664,6 +1682,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png 0.18.1",
  "skrifa 0.44.0",
  "smallvec",
  "vello_common",
@@ -1875,7 +1894,7 @@ dependencies = [
  "image-webp",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "tiff",
  "zune-core",
  "zune-jpeg",
@@ -1890,6 +1909,12 @@ dependencies = [
  "byteorder-lite",
  "quick-error 2.0.1",
 ]
+
+[[package]]
+name = "imagesize"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
 name = "indexmap"
@@ -2119,6 +2144,17 @@ dependencies = [
 
 [[package]]
 name = "kurbo"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c62026ae44756f8a599ba21140f350303d4f08dcdcc71b5ad9c9bb8128c13c62"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "smallvec",
+]
+
+[[package]]
+name = "kurbo"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
@@ -2210,7 +2246,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mailcraft"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "apple-native-keyring-store",
  "arboard",
@@ -2225,6 +2261,7 @@ dependencies = [
  "mailcraft-charset",
  "mailcraft-control-key",
  "mailcraft-engine",
+ "mailcraft-ews",
  "mailcraft-jmap",
  "mailcraft-link",
  "mailcraft-model",
@@ -2251,16 +2288,16 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-charset"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
- "base64",
+ "base64 0.23.1",
  "encoding_rs",
  "proptest",
 ]
 
 [[package]]
 name = "mailcraft-cli"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-charset",
  "mailcraft-engine",
@@ -2268,60 +2305,93 @@ dependencies = [
  "mailcraft-mcp",
  "mailcraft-model",
  "mailcraft-net",
+ "mailcraft-pst",
  "mailcraft-time",
  "serde_json",
 ]
 
 [[package]]
 name = "mailcraft-control-key"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "ring",
 ]
 
 [[package]]
+name = "mailcraft-dav"
+version = "0.11.1"
+dependencies = [
+ "mailcraft-ical",
+ "mailcraft-model",
+ "mailcraft-time",
+ "mailcraft-vcard",
+ "proptest",
+ "quick-xml 0.42.0",
+]
+
+[[package]]
 name = "mailcraft-engine"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "image",
  "libc",
  "log",
  "mailcraft-charset",
+ "mailcraft-engine",
  "mailcraft-html",
  "mailcraft-i18n",
  "mailcraft-ical",
  "mailcraft-mime",
  "mailcraft-model",
+ "mailcraft-names",
+ "mailcraft-pst",
  "mailcraft-time",
  "mailcraft-vcard",
  "proptest",
  "ring",
  "serde",
  "serde_json",
+ "sysinfo",
  "thiserror 2.0.21",
  "unicode-segmentation",
 ]
 
 [[package]]
+name = "mailcraft-ews"
+version = "0.11.1"
+dependencies = [
+ "hmac",
+ "log",
+ "mailcraft-mime",
+ "mailcraft-model",
+ "mailcraft-time",
+ "md-5",
+ "md4",
+ "proptest",
+ "quick-xml 0.42.0",
+]
+
+[[package]]
 name = "mailcraft-html"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-link",
  "mailcraft-names",
  "proptest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "mailcraft-i18n"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "mailcraft-ical"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-model",
  "mailcraft-time",
@@ -2330,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-jmap"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "log",
  "mailcraft-charset",
@@ -2343,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-link"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-names",
  "proptest",
@@ -2351,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-mcp"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "log",
  "mailcraft-control-key",
@@ -2361,23 +2431,25 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-mime"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-charset",
  "mailcraft-html",
  "mailcraft-model",
  "mailcraft-time",
  "proptest",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "mailcraft-model"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-charset",
  "mailcraft-i18n",
  "mailcraft-link",
+ "mailcraft-names",
  "mailcraft-time",
  "proptest",
  "serde",
@@ -2387,14 +2459,14 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-names"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "mailcraft-net"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "flate2",
  "log",
@@ -2417,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-proto"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "log",
  "mailcraft-charset",
@@ -2426,8 +2498,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailcraft-pst"
+version = "0.11.1"
+dependencies = [
+ "mailcraft-charset",
+ "proptest",
+]
+
+[[package]]
 name = "mailcraft-time"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "jiff",
  "js-sys",
@@ -2437,10 +2517,11 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-ui-egui"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "egui",
  "egui_kittest",
+ "epaint",
  "image",
  "js-sys",
  "log",
@@ -2450,6 +2531,8 @@ dependencies = [
  "mailcraft-link",
  "mailcraft-mime",
  "mailcraft-model",
+ "mailcraft-names",
+ "mailcraft-pst",
  "mailcraft-time",
  "serde",
  "serde_json",
@@ -2459,7 +2542,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-vcard"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "mailcraft-charset",
  "mailcraft-model",
@@ -2469,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "mailcraft-web"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "eframe",
  "egui",
@@ -2487,6 +2570,25 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "md-5"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
+dependencies = [
+ "cfg-if",
+ "digest",
+]
+
+[[package]]
+name = "md4"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd76fb0fd6b2e4be62a73f8e0858ca97f81babcb1af322dcaca196f735f17f80"
+dependencies = [
+ "digest",
 ]
 
 [[package]]
@@ -2562,7 +2664,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
- "png",
+ "png 0.18.1",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
 ]
@@ -2664,6 +2766,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ntapi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]
@@ -2938,6 +3049,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-io-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "objc2-io-surface"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3197,7 +3318,7 @@ checksum = "839c8299360d2e998bdb106dc0a6cd71dcc5f4df51df1b620361bf50e283cca6"
 dependencies = [
  "bytemuck",
  "color",
- "kurbo",
+ "kurbo 0.13.1",
  "linebender_resource_handle",
  "smallvec",
 ]
@@ -3263,6 +3384,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pico-args"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3310,6 +3437,19 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
+]
 
 [[package]]
 name = "png"
@@ -3656,6 +3796,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "resvg"
+version = "0.45.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8928798c0a55e03c9ca6c4c6846f76377427d2c1e1f7e6de3c06ae57942df43"
+dependencies = [
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes",
+ "tiny-skia",
+ "usvg",
+]
+
+[[package]]
 name = "rfd"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3683,6 +3837,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rgb"
+version = "0.8.53"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3695,6 +3858,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rustc-hash"
@@ -4058,6 +4227,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "simplecss"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a9c6883ca9c3c7c90e888de77b7a5c849c779d25d74a1269b0218b14e8b136c"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4202,12 +4380,25 @@ name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
+dependencies = [
+ "float-cmp",
+]
 
 [[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "svgtypes"
+version = "0.15.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68c7541fff44b35860c1a7a47a7cadf3e4a304c457b58f9870d9706ece028afc"
+dependencies = [
+ "kurbo 0.11.3",
+ "siphasher",
+]
 
 [[package]]
 name = "syn"
@@ -4251,6 +4442,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.8",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.40.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e8a3edbe0394ce115f3917a00349dd242be09eb5a091ed509eaf67b55cfb8a8"
+dependencies = [
+ "libc",
+ "memchr",
+ "ntapi",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "windows",
 ]
 
 [[package]]
@@ -4370,6 +4575,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
+ "png 0.17.16",
  "tiny-skia-path",
 ]
 
@@ -4556,6 +4762,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "usvg"
+version = "0.45.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80be9b06fbae3b8b303400ab20778c80bbaf338f563afe567cf3c9eea17b47ef"
+dependencies = [
+ "base64 0.22.1",
+ "data-url",
+ "flate2",
+ "imagesize",
+ "kurbo 0.11.3",
+ "log",
+ "pico-args",
+ "roxmltree",
+ "simplecss",
+ "siphasher",
+ "strict-num",
+ "svgtypes",
+ "tiny-skia-path",
+ "xmlwriter",
+]
+
+[[package]]
 name = "uuid"
 version = "1.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4577,6 +4805,7 @@ dependencies = [
  "guillotiere",
  "log",
  "peniko",
+ "png 0.18.1",
  "smallvec",
  "thiserror 2.0.21",
 ]
@@ -4590,6 +4819,7 @@ dependencies = [
  "bytemuck",
  "glifo",
  "hashbrown 0.17.1",
+ "png 0.18.1",
  "vello_common",
 ]
 
@@ -5043,6 +5273,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5050,6 +5296,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
@@ -5451,12 +5703,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
+name = "xmlwriter"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
 name = "xtask"
-version = "0.8.2"
+version = "0.11.1"
 dependencies = [
  "image",
  "mailcraft-charset",
  "mailcraft-i18n",
+ "resvg",
  "ring",
  "serde_json",
 ]

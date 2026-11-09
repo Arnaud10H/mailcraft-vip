@@ -35,6 +35,7 @@ fn request() -> JmapMailRequest {
         ],
         sends: vec![SendUp { message: 7, draft: None, mime: Some(Box::new(to_bob)) }],
         background: true,
+        threads: vec!["E5".into()],
     }
 }
 
@@ -50,6 +51,7 @@ fn result() -> JmapMailResult {
     };
     JmapMailResult {
         account: 3,
+        threads: vec![crate::sync::ThreadOf { id: "E5".into(), thread: "T5".into(), ..Default::default() }],
         email: ME.into(),
         session: SESSION.into(),
         changes: vec![
@@ -64,7 +66,12 @@ fn result() -> JmapMailResult {
                 outcome: JmapOutcome::Refused { why: format!("{ME} may not delete it") },
             },
         ],
-        sent: vec![SendDone { message: 7, outcome: SendOutcome::Held { lost: false, why: format!("{ME} was refused") }, draft: None }],
+        sent: vec![SendDone {
+            message: 7,
+            outcome: SendOutcome::Held { lost: false, why: format!("{ME} was refused") },
+            draft: None,
+            draft_left: String::new(),
+        }],
         listing: Some(FolderListing {
             folders: vec![GraphFolder { id: "M1".into(), name: ME.into(), kind: FolderKind::Inbox, total: 4, unread: 1, ..Default::default() }],
             complete: true,

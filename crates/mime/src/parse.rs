@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use mailcraft_model::auth_results::{AUTH_AS, DIRECTIONALITY, MAX_AUTH_AS};
 use mailcraft_model::{Attachment, FlagStatus, Importance, Message};
 
 use crate::header::{self, Headers, parse_params};
@@ -73,6 +74,8 @@ pub fn parse(bytes: &[u8]) -> Message {
 
 fn read_headers(headers: &Headers, m: &mut Message) {
     let mut kept_bytes = 0usize;
+    let mut kept_auth_as = 0usize;
+    let mut kept_direction = 0usize;
     let mut complete = false;
     for field in &headers.0 {
         let name = field.name.to_ascii_lowercase();
@@ -112,9 +115,27 @@ fn read_headers(headers: &Headers, m: &mut Message) {
             "x-mailcraft-flag" => complete |= value.trim().eq_ignore_ascii_case("complete"),
             // MailCraft's own note of the file a message was opened from: never a sender's.
             "x-mailcraft-opened-file-sha256" => {}
+            // Nor of where in a .pst file a message was (#815).
+            "x-mailcraft-pst-item" => {}
             // Read once, below.
             "date" | "from" | "subject" | "message-id" | "in-reply-to" | "importance" | "x-priority" | "mime-version" => {}
             structural if structural.starts_with("content-") => {}
+            // Kept apart from the cap below, so that a sender's padding can't push Exchange's own out.
+            auth_as if auth_as.eq_ignore_ascii_case(AUTH_AS) => {
+                if kept_auth_as < MAX_AUTH_AS {
+                    kept_auth_as += 1;
+                    // Cut short by `header::split` already.
+                    m.headers.push((field.name.clone(), value.to_string()));
+                    m.fresh_stamps = true;
+                }
+            }
+            // So is Exchange's word on which way the message went.
+            direction if direction.eq_ignore_ascii_case(DIRECTIONALITY) => {
+                if kept_direction < MAX_AUTH_AS {
+                    kept_direction += 1;
+                    m.headers.push((field.name.clone(), value.to_string()));
+                }
+            }
             _ => {
                 let size = field.name.len() + value.len();
                 if m.headers.len() < MAX_KEPT_HEADERS && kept_bytes + size <= MAX_KEPT_BYTES {
@@ -302,7 +323,7 @@ fn decode(body: &[u8], encoding: &str) -> Vec<u8> {
 /// The parts of a multipart body: what lies between `--boundary` lines, without the line break
 /// that belongs to the delimiter. The text before the first delimiter and after the closing
 /// `--boundary--` is ignored. A body that is cut short still gives its last part.
-fn split_multipart<'a>(body: &'a [u8], boundary: &str, max: usize) -> Vec<&'a [u8]> {
+pub(crate) fn split_multipart<'a>(body: &'a [u8], boundary: &str, max: usize) -> Vec<&'a [u8]> {
     let delimiter = [b"--", boundary.as_bytes()].concat();
     let mut parts = Vec::new();
     let mut start: Option<usize> = None;

@@ -36,7 +36,7 @@ impl AutoReplyForm {
     pub fn command(&self) -> (&'static str, Value) {
         let time = |t: &str| if t.trim().is_empty() { Value::Null } else { json!(t.trim()) };
         (
-            "account.automaticReplies",
+            "vip.automaticReplies",
             json!({"enabled": self.enabled, "subject": self.subject, "message": self.message, "start": time(&self.start), "end": time(&self.end)}),
         )
     }
