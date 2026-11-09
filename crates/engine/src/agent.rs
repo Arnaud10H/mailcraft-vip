@@ -548,6 +548,9 @@ const SETTINGS: &[&str] = &[
 ];
 
 const NEVER: &[&str] = &[
+    // Writes many files into a folder of the computer's: agents export one at a time
+    // (file.exportMessage), into the folder `mcp --files` gives them.
+    "file.exportMessages",
     // The host's side of a synchronisation: what came from a server is the host's to say.
     "sync.request",
     "sync.apply",

@@ -333,6 +333,53 @@ fn every_attachment_is_saved_into_a_folder_and_nothing_is_written_over() {
 }
 
 #[test]
+fn selected_messages_are_saved_into_a_folder_as_eml_or_html() {
+    let mut s = session();
+    let mut ids = Vec::new();
+    for (subject, body) in [("Plan", "one"), ("Plan", "two <b>&</b>"), ("Notes", "three")] {
+        run(&mut s, "mail.new", json!({"to": "maya@lumen.example", "subject": subject, "body": body}));
+        ids.push(run(&mut s, "compose.send", json!({}))["id"].as_u64().unwrap());
+    }
+    // The third shows a picture of its own in its HTML.
+    let m = s.mailbox.message_mut(ids[2]).unwrap();
+    m.body.html = Some(r#"<p>three<img src="cid:logo@x.example"></p><script>alert(1)</script>"#.into());
+    m.attachments.push(mailcraft_model::Attachment {
+        content_id: "logo@x.example".into(),
+        inline: true,
+        ..mailcraft_model::Attachment::new("logo.png", "image/png", vec![1, 2, 3])
+    });
+    let dir = std::env::temp_dir().join(format!("mailcraft-save-messages-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.to_string_lossy().to_string();
+
+    // The selection by default, as .eml; the same subject twice is two files.
+    s.sel.messages = ids.clone();
+    let r = run(&mut s, "file.exportMessages", json!({"path": path}));
+    assert_eq!(r["saved"], json!(["Plan.eml", "Plan (2).eml", "Notes.eml"]));
+    let eml = std::fs::read_to_string(dir.join("Plan (2).eml")).unwrap();
+    assert!(eml.contains("Subject: Plan") && eml.contains("two"), "{eml}");
+
+    // Named, as .html: never over the files already there.
+    let r = run(&mut s, "file.exportMessages", json!({"ids": ids, "path": path, "format": "html"}));
+    assert_eq!(r["saved"], json!(["Plan.html", "Plan (2).html", "Notes.html"]));
+    let text = std::fs::read_to_string(dir.join("Plan (2).html")).unwrap();
+    assert!(
+        text.contains("two &lt;b&gt;&amp;&lt;/b&gt;") && text.contains("maya@lumen.example") && text.contains("Content-Security-Policy"),
+        "{text}"
+    );
+    let html = std::fs::read_to_string(dir.join("Notes.html")).unwrap();
+    assert!(html.contains(r#"src="data:image/png;base64,AQID""#) && !html.contains("cid:"), "{html}");
+
+    // Nothing selected, a file for a folder, a format it doesn't know: refused.
+    s.sel.messages.clear();
+    assert!(s.run("file.exportMessages", &json!({"path": path})).is_err());
+    assert!(s.run("file.exportMessages", &json!({"ids": [ids[0]], "path": dir.join("Notes.eml").to_string_lossy()})).is_err());
+    assert!(s.run("file.exportMessages", &json!({"ids": [ids[0]], "path": path, "format": "pdf"})).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn saved_attachments_and_exports_are_named_safely() {
     let mut s = session();
     let id = first(&mut s);

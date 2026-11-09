@@ -525,6 +525,10 @@ pub trait RichClipboard {
     fn text(&self) -> Option<String> {
         None
     }
+    /// Put these files on the clipboard, for a file manager to paste (Ctrl+C on the message list).
+    fn files(&self, _paths: &[std::path::PathBuf]) -> Result<(), String> {
+        Err("this clipboard takes no files".into())
+    }
 }
 
 /// The largest side of a picture taken from the clipboard, in pixels.

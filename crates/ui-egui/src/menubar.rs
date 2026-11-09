@@ -139,6 +139,7 @@ const FILE: &[Row] = &[
     Sep,
     Cmd("file.import"),
     Cmd("file.exportMessage"),
+    Cmd("file.exportMessages"),
     Cmd("file.exportFolder"),
     Cmd("file.exportCalendar"),
     Cmd("file.exportContacts"),

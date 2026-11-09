@@ -1,0 +1,1 @@
+- **Save several messages as files at once.** Select messages, then right-click › Save Selected Messages (.eml or .html)…, or File › Open & Export: one file per message in the folder you pick, named by its subject. Ctrl+C on the message list puts them on the clipboard as files, to paste into a file manager.

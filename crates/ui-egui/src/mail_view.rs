@@ -522,6 +522,7 @@ fn search_bar(app: &mut MailApp, ui: &mut Ui, found: usize) {
 
 fn list(app: &mut MailApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    crate::files::copy_messages(app, ui.ctx());
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     list_header(app, ui);
     // Gmail's categories, when they are tabs above a Gmail Inbox's list (#911).
@@ -1226,11 +1227,15 @@ fn clicks(app: &mut MailApp, ui: &Ui, resp: &egui::Response, row: &Row, m: &Mess
         mi(ui, app, "Messages from Sender", "mail.findFromSender", json!({"id": id}));
         mi(ui, app, "Save Message As…", "file.exportMessage", json!({}));
         mi(ui, app, "View Source", "mail.viewSource", json!({}));
+        mi(ui, app, "Save Selected Messages (.eml)…", "file.exportMessages", json!({"format": "eml"}));
+        mi(ui, app, "Save Selected Messages (.html)…", "file.exportMessages", json!({"format": "html"}));
     });
 }
 
 #[cfg(test)]
 mod density_tests;
+#[cfg(test)]
+mod copy_files_tests;
 #[cfg(test)]
 mod focus_stays_tests;
 #[cfg(test)]

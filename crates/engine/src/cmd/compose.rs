@@ -316,13 +316,13 @@ const ORIGINAL: &str = "-----Original Message-----";
 /// The names of the header lines above a quoted original, with their colons, in the interface
 /// language: the recipient reads them as the owner's program wrote them (French puts a narrow
 /// no-break space before the colon: `De\u{202f}:`).
-fn header_names(s: &Session) -> [&'static str; 5] {
+pub(crate) fn header_names(s: &Session) -> [&'static str; 5] {
     let lang = s.interface_language;
     [lang.t("From:"), lang.t("Sent:"), lang.t("To:"), lang.t("Cc:"), lang.t("Subject:")]
 }
 
 /// When the original was sent, as its header line says it.
-fn sent_on(s: &Session, m: &Message) -> String {
+pub(crate) fn sent_on(s: &Session, m: &Message) -> String {
     let at = s.local(m.date);
     s.date_time_said(at)
 }
@@ -331,7 +331,7 @@ fn sent_on(s: &Session, m: &Message) -> String {
 const QUOTED_NAMES: usize = 100;
 
 /// A recipient line for the quote under a reply or forward, cut after [`QUOTED_NAMES`] with a count.
-fn quoted_list(list: &[Address]) -> String {
+pub(crate) fn quoted_list(list: &[Address]) -> String {
     let (mut line, more) = mailcraft_model::format_list_capped(list, QUOTED_NAMES);
     if more > 0 {
         line.push_str(&format!("; … (+{more})"));

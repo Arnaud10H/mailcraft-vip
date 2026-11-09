@@ -18166,3 +18166,26 @@ msgstr "« {subject} » est introuvable sur son serveur, il ne peut donc pas êt
 #~ msgstr[0] "{n} message sera définitivement supprimé."
 #~ msgstr[1] "{n} messages seront définitivement supprimés."
 
+msgid "Save Selected Messages"
+msgstr "Enregistrer les messages sélectionnés"
+
+msgid "Save Selected Messages (.eml)…"
+msgstr "Enregistrer les messages sélectionnés (.eml)…"
+
+msgid "Save Selected Messages (.html)…"
+msgstr "Enregistrer les messages sélectionnés (.html)…"
+
+msgid "Save Selected Messages (.eml)"
+msgstr "Enregistrer les messages sélectionnés (.eml)"
+
+msgid "Save Selected Messages (.html)"
+msgstr "Enregistrer les messages sélectionnés (.html)"
+
+msgid "Each selected message as a file of its own, in a folder you choose"
+msgstr "Chaque message sélectionné dans un fichier, dans le dossier de votre choix"
+
+msgid "Saved {count} messages in {folder}"
+msgstr "{count} messages enregistrés dans {folder}"
+
+msgid "Copied {count} messages: paste them into a folder"
+msgstr "{count} messages copiés : collez-les dans un dossier"

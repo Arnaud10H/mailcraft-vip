@@ -119,6 +119,12 @@ pub(crate) fn intercept(app: &mut MailApp, id: &str, params: &Value) -> Option<R
             return Some(Ok(json!({"pending": purpose})));
         }
     }
+    // The selected messages: into a folder the owner picks.
+    if id == "file.exportMessages" && params.get("path").is_none() && app.enabled(id) {
+        app.services.file_dialog.as_ref()?;
+        let dir = app.ui.last_dir.clone();
+        return Some(ask(app, FileDialogRequest::Folder { dir }, AfterPick::Export { command: id.to_string(), params: params.clone() }));
+    }
     // Save All Attachments: into a folder the owner picks (the browser downloads each file).
     // (Of the message named, which a window of its own names whatever is selected; one with no
     // files to save says so without a folder being asked for.)
@@ -265,6 +271,10 @@ pub(crate) fn poll(app: &mut MailApp) -> Option<Result<Value, String>> {
             } else if let (Ok(v), "mail.saveAllAttachments") = (&r, command.as_str()) {
                 let n = v.get("saved").and_then(Value::as_u64).unwrap_or(0) as usize;
                 app.status(tln!(n, "Saved {n} attachment", "Saved {n} attachments"));
+            } else if let Some(saved) = r.as_ref().ok().and_then(|v| v.get("saved")).and_then(Value::as_array).map(Vec::len)
+                && command == "file.exportMessages"
+            {
+                app.status(crate::i18n::fmt(tl!("Saved {count} messages in {folder}"), &[("count", &saved.to_string()), ("folder", &path)]));
             } else if r.is_ok() {
                 let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 app.status(crate::i18n::fmt(tl!("Saved {name}"), &[("name", &name)]));
@@ -454,6 +464,53 @@ fn opened_path(app: &mut MailApp, purpose: &str, path: &str, asking: Option<u64>
         app.ui.backstage = false;
     }
     r
+}
+
+/// Ctrl+C on the message list: the selected messages as .eml files on the system's clipboard, for
+/// a file manager to paste. They are written into a folder of this program's (emptied at each
+/// copy) and the clipboard names them (`text/uri-list` on Linux). Only where the host's clipboard
+/// takes files, and never when the reading pane has text selected: that text is what is copied.
+pub(crate) fn copy_messages(app: &mut MailApp, ctx: &egui::Context) {
+    let copy = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
+    if !copy
+        || app.session.sel.messages.is_empty()
+        || app.services.clipboard.is_none()
+        || app.dialog.is_some()
+        || app.ui.backstage
+        || ctx.text_edit_focused()
+        || egui::Popup::is_any_open(ctx)
+        || app.text_selection.any()
+        || ctx.with_plugin(|labels: &mut egui::text_selection::LabelSelectionState| labels.has_selection()).unwrap_or(false)
+    {
+        return;
+    }
+    // (No files, folders or process id in the browser.)
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
+    // Per user and private where the system has such a place (Linux), else the temporary folder.
+    let base = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let dir = base.join(format!("mailcraft-copied-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        app.status(format!("{}: {e}", dir.display()));
+        return;
+    }
+    let r = app.execute("file.exportMessages", json!({"path": dir.to_string_lossy()}));
+    let saved: Vec<std::path::PathBuf> = match &r {
+        Ok(v) => {
+            v.get("saved").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(|n| dir.join(n)).collect()).unwrap_or_default()
+        }
+        Err(e) => return app.status(e.clone()),
+    };
+    let put = app.services.clipboard.as_ref().map(|board| board.files(&saved));
+    match put {
+        Some(Ok(())) => {
+            app.status(crate::i18n::fmt(tl!("Copied {count} messages: paste them into a folder"), &[("count", &saved.len().to_string())]))
+        }
+        Some(Err(e)) => app.status(e),
+        None => {}
+    }
 }
 
 /// The mailbox file at `path` was opened: first in File's Recent, and File closes.

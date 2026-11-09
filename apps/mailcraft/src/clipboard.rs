@@ -65,6 +65,10 @@ impl RichClipboard for Board {
         self.with(|b| b.get_text()).ok()
     }
 
+    fn files(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
+        self.with(|b| b.set().file_list(paths))
+    }
+
     fn image(&self) -> Option<Vec<u8>> {
         let image = self.with(|b| b.get_image()).ok()?;
         png(image.width, image.height, &image.bytes)

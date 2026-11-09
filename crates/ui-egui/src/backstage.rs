@@ -496,6 +496,11 @@ fn open(app: &mut MailApp, ui: &mut Ui, t: &Tokens) {
             let _ = app.run(command, json!({}));
         }
     }
+    for (format, label) in [("eml", tl!("Save Selected Messages (.eml)")), ("html", tl!("Save Selected Messages (.html)"))] {
+        if tile(ui, "export", label, tl!("Each selected message as a file of its own, in a folder you choose"), t) {
+            let _ = app.run("file.exportMessages", json!({"format": format}));
+        }
+    }
     section(ui, tl!("Start over"), t);
     if tile(ui, "mail", tl!("Sample Mailbox"), tl!("Invented mail, meetings, people and tasks to try things on"), t) {
         let _ = app.run("file.new", json!({"sample": true}));
