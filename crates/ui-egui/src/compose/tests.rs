@@ -883,6 +883,26 @@ fn unedited(h: &Window) -> bool {
     h.state().session.compose.as_ref().unwrap().signature_unedited()
 }
 
+/// The signature shown while writing is a true preview: its own pictures go with it, and those on
+/// the web it names are the owner's own, downloaded as for the sample reply of File › Signatures (VIP).
+#[test]
+fn an_html_signature_is_shown_with_its_pictures_while_writing() {
+    let logo = mailcraft_model::signature::Picture {
+        id: 1,
+        name: "logo.png".into(),
+        mime: "image/png".into(),
+        data: std::sync::Arc::new(vec![1, 2, 3]),
+        ..Default::default()
+    };
+    let cid = mailcraft_model::signature::Signature::picture_cid(1);
+    let html = format!(r#"<img src="cid:{cid}"><img src="https://artisan-digital.eu/phone.png">"#);
+    let m = super::signature_message(&html, &[logo]);
+    assert_eq!(m.id, crate::reading::remote::PREVIEW);
+    assert_eq!(m.attachments.len(), 1);
+    assert_eq!(m.attachments[0].content_id, cid);
+    assert!(m.attachments[0].inline);
+}
+
 /// An HTML signature is shown in the message as it goes out, under the text and out of the
 /// keyboard's reach, until the owner chooses to edit it as text.
 #[test]

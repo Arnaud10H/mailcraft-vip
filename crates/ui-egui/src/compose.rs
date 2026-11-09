@@ -517,8 +517,8 @@ fn header(app: &mut MailApp, ui: &mut Ui, c: &Shown, focus_to: bool) {
 }
 
 /// An HTML signature as it goes out, under the owner's text in place of its simpler copy
-/// ([`editor::html_signature`]): read-only, its pictures on the web not fetched, with a way to
-/// edit it as text instead, and back while that copy is unedited.
+/// ([`editor::html_signature`]): read-only, with its pictures, with a way to edit it as text
+/// instead, and back while that copy is unedited.
 fn signature(app: &mut MailApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some(html) = editor::unedited_html_signature(app).map(str::to_string) else { return };
@@ -532,12 +532,12 @@ fn signature(app: &mut MailApp, ui: &mut Ui) {
         }
         return;
     }
-    let key = egui::Id::unique("mailcraft-compose-signature").with(&html);
+    let pictures = app.session.compose.as_ref().and_then(|c| c.signature.as_ref()).map(|i| i.pictures.clone()).unwrap_or_default();
+    let key = egui::Id::unique("mailcraft-compose-signature").with(&html).with(pictures.iter().map(|p| p.id).collect::<Vec<_>>());
     let message = match ctx.data(|d| d.get_temp::<std::sync::Arc<mailcraft_model::Message>>(key)) {
         Some(m) => m,
         None => {
-            // As it is sent: cleaned.
-            let m = std::sync::Arc::new(crate::signatures::message_of(mailcraft_engine::html::quotable(&html), &[], |_| String::new()));
+            let m = std::sync::Arc::new(signature_message(&html, &pictures));
             ctx.data_mut(|d| d.insert_temp(key, m.clone()));
             m
         }
@@ -557,6 +557,18 @@ fn signature(app: &mut MailApp, ui: &mut Ui) {
     app.hit.add("composeSignatureAsText", 0, edit.rect);
     if edit.clicked() {
         let _ = app.run("compose.signatureAsText", json!({"value": true}));
+    }
+}
+
+/// An HTML signature shown in the message being written, as it is sent (cleaned), with its own
+/// pictures and those on the web it names: the owner's own, numbered as the sample reply of
+/// File › Signatures so they are downloaded for a true preview (VIP).
+pub(crate) fn signature_message(html: &str, pictures: &[mailcraft_model::signature::Picture]) -> mailcraft_model::Message {
+    mailcraft_model::Message {
+        id: crate::reading::remote::PREVIEW,
+        ..crate::signatures::message_of(mailcraft_engine::html::quotable(html), pictures, |p| {
+            mailcraft_model::signature::Signature::picture_cid(p.id)
+        })
     }
 }
 
